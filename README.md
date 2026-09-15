@@ -185,6 +185,7 @@ camera handles) are ever serialized into a preset or any config file.
   LEDs and emits the frame/stimulus marker protocol the acquisition scripts
   parse. The pin map is documented at the top of the `.ino`.
 - Optional second monitor for the visual stimulus server.
+- Optional vibrotactile stimulation delivery mechanism.
 
 ## Known behavior
 
