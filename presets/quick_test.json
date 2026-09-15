@@ -1,0 +1,15 @@
+{
+  "_name": "Quick test (3 trials, no stim, no analyze)",
+  "_description": "Minimal session to verify the rig is working before a real experiment. Short warm-up, few trials.",
+  "trials": 3,
+  "iti": 5.0,
+  "red_stabilization_s": 30.0,
+  "analyze": false,
+  "visual_stim": false,
+  "save_format": "raw",
+  "binning": 2,
+  "camera_binning": 1,
+  "green_frames": 30,
+  "baseline_frames": 40,
+  "post_frames": 40
+}

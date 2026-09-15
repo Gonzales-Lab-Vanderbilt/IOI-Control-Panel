@@ -1,0 +1,23 @@
+# pip-installable dependencies for the IOI acquisition and analysis scripts.
+#
+# setup.ps1 installs these. By hand:
+#   py -3.10 -m pip install -r requirements_scripts.txt
+#
+# IMPORTANT — PySpin is NOT listed here.
+# PySpin ships with the Spinnaker SDK from FLIR/Teledyne and must be installed
+# separately (see INSTALL.md).  All camera-dependent scripts fail without it.
+
+pyserial>=3.5
+# Upper bound is load-bearing: PySpin (Spinnaker SDK) is built against the
+# numpy 1.x ABI. numpy>=2.0 imports fine on its own but breaks PySpin at
+# import/runtime with an ABI mismatch -- do not remove the <2.0 cap.
+numpy>=1.24,<2.0
+matplotlib>=3.7
+Pillow>=9.0
+tifffile>=2023.1
+scipy>=1.10
+
+# Only intrinsic_visual_stimulus.py (the Python stimulus server) needs this.
+# Skip it if you are not running visual stimuli. pygame has no numpy
+# version constraint of its own, so it will not disturb the pinned stack above.
+pygame>=2.1

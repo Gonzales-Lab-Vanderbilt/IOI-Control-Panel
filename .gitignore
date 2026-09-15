@@ -1,0 +1,55 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# PyInstaller
+build/
+dist/
+*.manifest
+
+# Vendored installers / SDK wheels — NOT redistributed
+dependencies/
+*.whl
+python-*-amd64.exe
+
+# Local packaging output
+deploy/
+
+# Assistant / editor / OS
+.claude/
+CLAUDE.md
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Backups
+*.bak
+*.orig
+
+# Per-computer settings the app rewrites at runtime (gui/rig_settings.py,
+# gui/ui_scale.py) -- defaults live in code
+rig_settings.json
+ui_settings.json
+
+# Experimental output — never commit
+captures/
+captures_*/
+dark_refs/
+dark_reference_*/
+visual_stim_logs/
+live_preview_snapshots/
+snapshot_*.npy
+snapshot_*.png
+*.mat
+
+# Compiled binaries
+*.exe

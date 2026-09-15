@@ -1,0 +1,12 @@
+# GUI-side dependencies only.
+# DO NOT add PySpin, numpy, or anything from the acquisition stack here.
+# The GUI process must stay completely decoupled from the Spinnaker SDK.
+# setup.ps1 installs this into the project's own .venv, not the py -3.10
+# script environment. By hand:
+#   py -3.10 -m venv .venv
+#   .venv\Scripts\python -m pip install -r requirements-gui.txt
+PySide6>=6.6
+pyserial>=3.5
+# Build-only: build_exe.ps1 packages the GUI into an exe with this. The GUI
+# never imports it at runtime.
+pyinstaller>=6.0
