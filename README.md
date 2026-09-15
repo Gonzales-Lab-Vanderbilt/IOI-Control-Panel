@@ -1,4 +1,4 @@
-# IOI Control Panel
+# Intrinsic Optical Imaging Control Panel
 
 A desktop GUI and script toolchain for running an intrinsic optical imaging (IOI)
 rig: guided red/green calibration, triggered acquisition, and offline analysis.
