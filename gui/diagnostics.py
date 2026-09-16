@@ -50,6 +50,10 @@ from gui.theme import CHROME_ACCENT_HEX, DANGER_HEX, GREEN_HEX, HINT_STYLE, text
 
 _PROJECT_ROOT = project_root()
 _LIVE_PREVIEW_SCRIPT = str(_PROJECT_ROOT / "live_preview.py")
+# Top of the preview window's exposure slider. Without it the slider spans the
+# camera's full ExposureTime range (it accepted 110108 us here), far past
+# anything usable. Same ceiling as the Run Session tab's calibration default.
+_LIVE_PREVIEW_MAX_EXPOSURE_US = 12_000.0
 _GRACEFUL_STOP_TIMEOUT_MS = 10_000
 _LED_VISUAL_PAUSE_MS = 2_000
 _LED_BAUD = 115_200
@@ -292,6 +296,7 @@ class DiagnosticsWidget(QWidget):
         args = [
             "--camera-index", str(self._camera_idx.value()),
             "--exposure-us", str(self._live_exposure_us.value()),
+            "--max-exposure-us", str(_LIVE_PREVIEW_MAX_EXPOSURE_US),
             "--pixel-format", self._live_pixel_format.currentText(),
             "--fps", str(self._live_fps.value()),
         ]

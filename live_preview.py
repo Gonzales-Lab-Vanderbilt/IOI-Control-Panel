@@ -71,6 +71,10 @@ class CameraConfigError(RuntimeError):
 class PreviewConfig:
     camera_index: int = 0
     exposure_us: float = 15000.0
+    # Ceiling for the exposure slider (and the starting exposure). None = the
+    # camera's own ExposureTime maximum, which at preview frame rates is far
+    # beyond anything useful under the rig's illumination.
+    max_exposure_us: float | None = None
     gain_db: float | None = 0.0
     pixel_format: str = "Mono16"
     fps: float = 10.0
@@ -193,10 +197,15 @@ class LivePreview:
         self.set_enum("PixelFormat", self.cfg.pixel_format)
         self.reset_roi_to_full_frame()
 
+        requested_exposure = self.cfg.exposure_us
+        if self.cfg.max_exposure_us is not None:
+            requested_exposure = min(requested_exposure, self.cfg.max_exposure_us)
+
         self.set_enum("ExposureAuto", "Off")
         self.set_enum("ExposureMode", "Timed")
-        actual_exposure = self.set_float("ExposureTime", self.cfg.exposure_us)
-        self.exposure_limits_us = self.get_float_limits("ExposureTime")
+        # Set before the frame rate too: a long exposure left over from a
+        # previous run would otherwise cap AcquisitionFrameRate below cfg.fps.
+        self.set_float("ExposureTime", requested_exposure)
 
         try:
             self.set_enum("GainAuto", "Off")
@@ -211,6 +220,17 @@ class LivePreview:
                 self.set_float("AcquisitionFrameRate", self.cfg.fps)
             except CameraConfigError as exc:
                 print(f"Warning: could not set AcquisitionFrameRate ({exc}).")
+
+        # Re-apply the exposure and read its limits only after the frame rate
+        # is set, in case the camera ties one to the other. The camera's own
+        # maximum is far past anything usable (the preview has run at 110108 us),
+        # so callers pass --max-exposure-us to bound the slider.
+        actual_exposure = self.set_float("ExposureTime", requested_exposure)
+        self.cfg.exposure_us = actual_exposure
+        exp_min, exp_max = self.get_float_limits("ExposureTime")
+        if self.cfg.max_exposure_us is not None:
+            exp_max = max(actual_exposure, min(exp_max, self.cfg.max_exposure_us))
+        self.exposure_limits_us = (exp_min, exp_max)
 
         print(
             f"Camera ready: index={self.cfg.camera_index}, "
@@ -382,7 +402,7 @@ class LivePreview:
         # Exposure slider -- adjusts ExposureTime live while acquisition
         # keeps running. Range comes from the camera's own reported limits
         # rather than a guessed default, so it always reflects what the
-        # hardware will actually accept.
+        # hardware will actually accept -- capped at --max-exposure-us if given.
         exp_min, exp_max = self.exposure_limits_us
         # left 0.22 (not 0.14) gives the label a real gutter so "Exposure (µs)"
         # isn't clipped off-canvas; width 0.58 keeps the value text clear of the
@@ -516,6 +536,10 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--camera-index", type=int, default=0)
     parser.add_argument("--exposure-us", type=float, default=15000.0)
+    parser.add_argument(
+        "--max-exposure-us", type=float, default=None,
+        help="Top of the exposure slider; also caps --exposure-us. Omit to use the camera's maximum.",
+    )
     parser.add_argument("--gain-db", type=float, default=0.0, help="Use a negative value to leave gain unchanged.")
     parser.add_argument("--pixel-format", type=str, default="Mono16", choices=["Mono8", "Mono12", "Mono16"])
     parser.add_argument("--fps", type=float, default=10.0, help="Preview frame rate cap. Use <=0 to skip AcquisitionFrameRate control.")
@@ -524,10 +548,13 @@ def main(argv: list[str]) -> int:
         help="Folder for snapshots saved by pressing 's' in the preview window.",
     )
     args = parser.parse_args(argv)
+    if args.max_exposure_us is not None and args.max_exposure_us <= 0:
+        parser.error("--max-exposure-us must be greater than 0")
 
     cfg = PreviewConfig(
         camera_index=args.camera_index,
         exposure_us=args.exposure_us,
+        max_exposure_us=args.max_exposure_us,
         gain_db=None if args.gain_db < 0 else args.gain_db,
         pixel_format=args.pixel_format,
         fps=args.fps,

@@ -101,7 +101,6 @@ _LIVE_PREVIEW_SCRIPT = str(_PROJECT_ROOT / "live_preview.py")
 _PEEK_ROI_SCRIPT = str(_PROJECT_ROOT / "statistical_analyses.py")
 _PEEK_OUT_SUBFOLDER = "peek"
 _GRACEFUL_STOP_TIMEOUT_MS = 15_000
-_LIVE_FEED_EXPOSURE_US = 15_000.0
 _LIVE_FEED_FPS = 15.0
 
 # Must match BlackflyCapture.SKIP_RED_STABILIZATION_FILENAME in
@@ -3617,9 +3616,14 @@ class RunSessionWidget(QWidget):
         self._send_light_command(CAL_GREEN_ON_CMD, "green illumination", self._launch_live_feed)
 
     def _launch_live_feed(self) -> None:
+        # The focus checks run under the same green light the calibration
+        # sweeps, so the slider stops (and starts) at that sweep's ceiling --
+        # uncapped, it spans the camera's full ExposureTime range.
+        max_us = self._cal_max_us.value()
         args = [
             "--camera-index", "0",
-            "--exposure-us", str(_LIVE_FEED_EXPOSURE_US),
+            "--exposure-us", str(max_us),
+            "--max-exposure-us", str(max_us),
             "--pixel-format", "Mono16",
             "--fps", str(_LIVE_FEED_FPS),
         ]
