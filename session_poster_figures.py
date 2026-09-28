@@ -77,6 +77,8 @@ import matplotlib.patheffects as pe
 from matplotlib.colors import Normalize
 from matplotlib.patches import Circle, FancyBboxPatch, Patch, Rectangle
 
+import ioi_landmarks
+
 W, H = 1920, 1200
 SMOOTH_SIGMA = 5.0
 CLUSTER_T_THRESH = 3.0
@@ -275,7 +277,8 @@ def green_reference_mean(session_dir: Path, trim_default: int = 5) -> np.ndarray
     return (acc / len(use)).reshape(H, W)
 
 
-def _render_green_reference_figure(session_dir: Path, region_fullres: tuple, roi_full: np.ndarray | None):
+def _render_green_reference_figure(session_dir: Path, region_fullres: tuple, roi_full: np.ndarray | None,
+                                   landmarks: dict | None = None):
     """Shared core for render_green_reference()/render_targeting_reference():
     full-frame green reference + the analysis region as a dashed rectangle,
     optionally with an ROI mask contoured on top. No legend, scale bar,
@@ -307,23 +310,76 @@ def _render_green_reference_figure(session_dir: Path, region_fullres: tuple, roi
     if roi_full is not None and roi_full.any():
         ax.contour(roi_full.astype(float), levels=[0.5], colors=C_ROI, linewidths=3.0, zorder=7)
 
+    _draw_landmarks_fullres(ax, landmarks)
     return fig, dpi
 
 
-def render_green_reference(session_dir: Path, region_fullres: tuple, out_path: Path) -> None:
-    fig, dpi = _render_green_reference_figure(session_dir, region_fullres, roi_full=None)
+def _draw_landmarks_fullres(ax, landmarks: dict | None) -> None:
+    """Bregma/lambda/reference point from the session's landmarks.json (Landmarks
+    tab), in full-resolution pixels. A trailing '?' marks anything not directly
+    visible (estimated, or from the surgical record)."""
+    if not landmarks:
+        return
+    halo = [pe.withStroke(linewidth=5, foreground="black")]
+    pts = landmarks.get("points") or {}
+    mid = [m for m in (pts.get("midline") or []) if m]
+    if len(mid) == 2:
+        (x0, y0), (x1, y1) = (mid[0]["x"], mid[0]["y"]), (mid[1]["x"], mid[1]["y"])
+        dx, dy = x1 - x0, y1 - y0
+        n = max(np.hypot(dx, dy), 1e-9)
+        ax.plot([x0 - dx / n * 4000, x0 + dx / n * 4000], [y0 - dy / n * 4000, y0 + dy / n * 4000],
+                color="white", lw=1.6, ls=(0, (8, 6)), alpha=0.8, zorder=8)
+    marks = [(pts.get("bregma"), "B"), (pts.get("lambda"), "L")]
+    rp = landmarks.get("reference_point")
+    if rp:
+        marks.append(({"x": rp["x"], "y": rp["y"], "status": "surgical"}, "R"))
+    for p, tag in marks:
+        if not p:
+            continue
+        sure = p.get("status") == "visible"
+        ax.plot(p["x"], p["y"], marker="+", ms=26, mew=3.2, color="white", zorder=9, path_effects=halo)
+        ax.text(p["x"] + 18, p["y"] - 18, tag + ("" if sure else "?"), color="white", fontsize=22,
+                fontweight="bold", zorder=9, path_effects=halo)
+
+
+def stereotaxic_summary(landmarks: dict, named_masks: dict, dmap_full: np.ndarray) -> dict:
+    """(AP, ML) of each mask's centroid, plus the response-weighted centre
+    of the cluster (weights = how negative the trial-mean dR/R is there), via
+    ioi_landmarks.stereotaxic(). Raises LandmarkError if the landmarks can't
+    anchor coordinates."""
+    out = {}
+    for name, m in named_masks.items():
+        if m is None or not m.any():
+            continue
+        ys, xs = np.nonzero(m)
+        cx, cy = float(xs.mean()), float(ys.mean())
+        out[name] = {"x": cx, "y": cy, **ioi_landmarks.stereotaxic(landmarks, cx, cy)}
+    cl = named_masks.get("cluster")
+    if cl is not None and cl.any():
+        w = np.where(cl & np.isfinite(dmap_full), np.clip(-np.nan_to_num(dmap_full), 0, None), 0.0)
+        if w.sum() > 0:
+            ys, xs = np.indices(w.shape)
+            cx, cy = float((xs * w).sum() / w.sum()), float((ys * w).sum() / w.sum())
+            out["response_weighted_centre"] = {"x": cx, "y": cy, **ioi_landmarks.stereotaxic(landmarks, cx, cy)}
+    return out
+
+
+def render_green_reference(session_dir: Path, region_fullres: tuple, out_path: Path,
+                           landmarks: dict | None = None) -> None:
+    fig, dpi = _render_green_reference_figure(session_dir, region_fullres, roi_full=None, landmarks=landmarks)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi, pad_inches=0)
     plt.close(fig)
 
 
-def render_targeting_reference(session_dir: Path, region_fullres: tuple, roi_full: np.ndarray, out_path: Path) -> None:
+def render_targeting_reference(session_dir: Path, region_fullres: tuple, roi_full: np.ndarray, out_path: Path,
+                               landmarks: dict | None = None) -> None:
     """Clean deliverable for targeting implants/injections relative to
     vasculature/anatomical landmarks: full-frame green reference, the
     analysis crop as a dashed rectangle, and the LOO ROI as a solid outline
     -- no legend, scale bar, compass, or colorbar (see _render_green_
     reference_figure)."""
-    fig, dpi = _render_green_reference_figure(session_dir, region_fullres, roi_full=roi_full)
+    fig, dpi = _render_green_reference_figure(session_dir, region_fullres, roi_full=roi_full, landmarks=landmarks)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi, pad_inches=0)
     plt.close(fig)
@@ -838,6 +894,13 @@ def main(argv: list) -> int:
     summary = json.loads(summary_path.read_text())
 
     print(f"Session: {session_dir.name}  stats: {stats_dir}  label: {label}")
+    try:
+        landmarks = ioi_landmarks.load(session_dir)
+    except ioi_landmarks.LandmarkError as exc:
+        print(f"WARNING: landmarks.json ignored: {exc}")
+        landmarks = None
+    if landmarks:
+        print(f"Landmarks: {ioi_landmarks.FILENAME} found (annotated {landmarks.get('annotated_at') or '?'}).")
     print("Building masks (full-session ROI, 180-degree out-region, cluster)...")
     masks = build_masks(session_dir, summary)
     trial_ids = summary["usable_trial_ids"]
@@ -865,13 +928,42 @@ def main(argv: list) -> int:
     dmap_full[cy0:cy0 + hh, cx0:cx0 + ww] = up[:hh, :ww]
 
     print("Rendering green reference...")
-    render_green_reference(session_dir, masks["region"], out_dir / f"{label}_green_reference.png")
+    render_green_reference(session_dir, masks["region"], out_dir / f"{label}_green_reference.png",
+                           landmarks=landmarks)
 
     print("Rendering targeting reference (green reference + LOO ROI outline, for implant/injection targeting)...")
     render_targeting_reference(session_dir, masks["region"], roi_core_full,
-                                out_dir / f"{label}_targeting_reference.png")
+                                out_dir / f"{label}_targeting_reference.png", landmarks=landmarks)
 
     scale_um_per_px = None if args.no_scale_bar else args.um_per_px
+    lm_um = ((landmarks or {}).get("calibration") or {}).get("um_per_px")
+    if lm_um and not args.no_scale_bar:
+        # calibration belongs to the session's optics, not to the rig setting at analysis time
+        if scale_um_per_px is not None and abs(scale_um_per_px - lm_um) > 1e-6:
+            print(f"NOTE: scale bar uses this session's landmarks.json calibration {lm_um} um/px, "
+                  f"not --um-per-px {scale_um_per_px}.")
+        scale_um_per_px = float(lm_um)
+
+    if landmarks:
+        try:
+            coords = stereotaxic_summary(landmarks, {"loo_roi_core": roi_core_full.astype(bool),
+                                                     "full_session_roi": masks["roi"].astype(bool),
+                                                     "cluster": masks["cluster"].astype(bool)}, dmap_full)
+            st_path = out_dir / f"{label}_stereotaxic.json"
+            st_path.write_text(json.dumps({
+                "session": session_dir.name, "stats_dir": str(stats_dir),
+                "landmarks_annotated_at": landmarks.get("annotated_at"),
+                "landmarks_annotator": landmarks.get("annotator"),
+                "hemispheres_in_view": (landmarks.get("orientation") or {}).get("hemispheres"),
+                "convention": "AP + anterior of origin; ML + animal's right; mm",
+                "centroids": coords,
+            }, indent=2), encoding="utf-8")
+            c = coords.get("response_weighted_centre") or coords.get("loo_roi_core")
+            if c:
+                print(f"Stereotaxic: response centre AP {c['ap_mm']:+.2f}, ML {c['ml_mm']:+.2f} mm from "
+                      f"{c['origin']} ({c['origin_status']}) -> {st_path.name}")
+        except ioi_landmarks.LandmarkError as exc:
+            print(f"Stereotaxic coordinates not written: {exc}")
     print("Rendering cortical panels..." + (" (no scale bar)" if scale_um_per_px is None else ""))
     v1 = render_panel(dmap_full, roi_core_full, masks["cluster"], _green_display(session_dir),
                        masks["region"], out_dir / f"{label}_drr_panel.png",

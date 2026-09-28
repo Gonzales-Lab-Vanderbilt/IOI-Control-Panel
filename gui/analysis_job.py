@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Gonzales Lab, Vanderbilt University
 """
 AnalysisJob — one queued/running statistical_analyses.py (+ chained
-session_poster_figures.py) run, as its own object.
+session_poster_figures.py, + optionally session_timelapse.py) run, as its own object.
 
 Ported off what used to be StatisticsWidget's single set of instance fields
 (one _phase/_output_dir/_loo_progress/... per widget, one ScriptRunner) so
@@ -51,6 +51,12 @@ _RE_POSTER_GREEN_REF  = re.compile(r"^Rendering (green reference|targeting refer
 _RE_POSTER_PANELS     = re.compile(r"^Rendering cortical panels")
 _RE_POSTER_EXTRACTING = re.compile(r"^Extracting (out-region|compare-session ROI) timecourse")
 _RE_POSTER_TIMECOURSE = re.compile(r"^Rendering timecourse")
+
+# ── ... and for the optional chained session_timelapse.py phase ─────────────
+_RE_TL_STREAMING = re.compile(r"^Timelapse: streaming (\d+) (\w+) trial")
+_RE_TL_TRIAL     = re.compile(r"Timelapse trial (\d+)/(\d+)")
+_RE_TL_REUSE     = re.compile(r"^Timelapse: reusing cached")
+_RE_TL_RENDER    = re.compile(r"^Timelapse: rendering (\d+) frames")
 
 # Compare-trace label for AnalysisJob.compare_job, keyed by the partner
 # job's own condition -- see _launch_poster_figures().
@@ -130,7 +136,8 @@ class AnalysisJob(QObject):
         self.output_dir: str | None = None
         self.log_lines: list[str] = []
 
-        self._phase: str = "stats"  # "stats" or "poster" -- which subprocess is (about to be) running
+        self._phase: str = "stats"  # "stats", "poster" or "timelapse" -- which subprocess is (about to be) running
+        self._compare_overrides: tuple[str | None, str | None, str | None] = (None, None, None)
         self._usable_total: int | None = None
         self._loo_progress = 0
         self._result_mean: str | None = None
@@ -200,7 +207,7 @@ class AnalysisJob(QObject):
             return
         self._stop_requested = True
         self.status = JobStatus.STOPPING
-        phase_name = "figures" if self._phase == "poster" else "statistics"
+        phase_name = {"poster": "figures", "timelapse": "time-lapse"}.get(self._phase, "statistics")
         self.phase_text = f"Stopping {phase_name}…"
         self._runner.send_stop_signal()
         self._stop_timer.start()
@@ -244,6 +251,10 @@ class AnalysisJob(QObject):
 
         if self._phase == "poster":
             self._on_poster_line(line)
+            self.status_changed.emit()
+            return
+        if self._phase == "timelapse":
+            self._on_timelapse_line(line)
             self.status_changed.emit()
             return
 
@@ -323,11 +334,33 @@ class AnalysisJob(QObject):
         elif _RE_POSTER_TIMECOURSE.search(line):
             self.phase_text = "Phase: figures — rendering timecourse…"
 
+    def _on_timelapse_line(self, line: str) -> None:
+        m = _RE_TL_STREAMING.search(line)
+        if m:
+            self.phase_text = f"Phase: time-lapse — averaging {m.group(1)} {m.group(2)} trials (streaming raw frames)…"
+            self.progress_range = (0, int(m.group(1)))
+            self.progress_value = 0
+            self.progress_format = ""
+        m = _RE_TL_TRIAL.search(line)
+        if m:
+            self.progress_range = (0, int(m.group(2)))
+            self.progress_value = int(m.group(1))
+            self.progress_format = f"Trial {m.group(1)} / {m.group(2)}"
+        if _RE_TL_REUSE.search(line):
+            self.phase_text = "Phase: time-lapse — reusing cached average…"
+        m = _RE_TL_RENDER.search(line)
+        if m:
+            self.phase_text = f"Phase: time-lapse — rendering {m.group(1)} frames…"
+            self.progress_range = (0, 0)
+            self.progress_format = ""
+
     # ── Phase transitions ────────────────────────────────────────────────────
 
     def _on_done(self, exit_code: int) -> None:
         if self._phase == "poster":
             self._on_poster_done(exit_code)
+        elif self._phase == "timelapse":
+            self._on_timelapse_done(exit_code)
         else:
             self._on_stats_done(exit_code)
 
@@ -376,6 +409,7 @@ class AnalysisJob(QObject):
             compare_label_override = _CONDITION_COMPARE_LABELS.get(
                 self.compare_job.condition, self.compare_job.condition.capitalize()
             )
+        self._compare_overrides = (compare_session_override, compare_stats_dir_override, compare_label_override)
         try:
             argv = analysis_argv.build_poster_argv(
                 self._stats_snapshot.session_dir, self.output_dir, self._poster_snapshot,
@@ -399,6 +433,9 @@ class AnalysisJob(QObject):
             self._finish(JobStatus.STOPPED, "Force-killed.")
             return
 
+        if exit_code == 0 and self._poster_snapshot.make_timelapse and not self._stop_requested:
+            self._launch_timelapse()
+            return
         if exit_code == 0:
             self.phase_text = "Statistics + figures complete."
             status = JobStatus.SUCCEEDED
@@ -409,6 +446,39 @@ class AnalysisJob(QObject):
             self.phase_text = f"Statistics complete; figures ended (exit code {exit_code}) — see log."
             status = JobStatus.FAILED
         self._finish(status)
+
+    def _launch_timelapse(self) -> None:
+        self._phase = "timelapse"
+        self.phase_text = "Phase: time-lapse — starting…"
+        self.progress_range = (0, 0)
+        self.progress_value = 0
+        self.progress_format = ""
+        cs, cd, cl = self._compare_overrides
+        try:
+            argv = analysis_argv.build_timelapse_argv(
+                self._stats_snapshot.session_dir, self.output_dir, self._poster_snapshot,
+                compare_session_override=cs, compare_stats_dir_override=cd, compare_label_override=cl,
+            )
+            self._runner.start(analysis_argv.TIMELAPSE_SCRIPT, argv)
+        except (RuntimeError, OSError, FileNotFoundError) as exc:
+            line = f"Time-lapse launch failed: {exc}"
+            self.log_lines.append(line)
+            self.log_line.emit(line)
+            self._finish(JobStatus.FAILED, f"Statistics + figures complete; time-lapse failed to launch: {exc}")
+            return
+        self.status_changed.emit()
+
+    def _on_timelapse_done(self, exit_code: int) -> None:
+        if self._force_killed:
+            self._finish(JobStatus.STOPPED, "Force-killed.")
+            return
+        if exit_code == 0:
+            self._finish(JobStatus.SUCCEEDED, "Statistics + figures + time-lapse complete.")
+        elif self._stop_requested:
+            self._finish(JobStatus.STOPPED, "Statistics + figures complete; time-lapse stopped — see log.")
+        else:
+            self._finish(JobStatus.FAILED,
+                         f"Statistics + figures complete; time-lapse ended (exit code {exit_code}) — see log.")
 
     def _finish(self, status: JobStatus, phase_text: str | None = None) -> None:
         self.status = status

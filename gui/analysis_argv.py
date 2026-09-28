@@ -3,7 +3,7 @@
 """
 Analysis argv builders — pure functions that turn a frozen snapshot of the
 Statistics form into the argv lists statistical_analyses.py /
-session_poster_figures.py expect.
+session_poster_figures.py / session_timelapse.py expect.
 
 Split out of gui/statistics_tab.py so a queued AnalysisJob can build its
 command line from a snapshot taken at "Run analysis" time, instead of
@@ -23,6 +23,7 @@ from gui.paths import project_root
 _PROJECT_ROOT = project_root()
 STATS_SCRIPT = str(_PROJECT_ROOT / "statistical_analyses.py")
 POSTER_SCRIPT = str(_PROJECT_ROOT / "session_poster_figures.py")
+TIMELAPSE_SCRIPT = str(_PROJECT_ROOT / "session_timelapse.py")
 DEFAULT_OUT_SUBFOLDER = "session_stats"
 
 
@@ -59,6 +60,7 @@ class PosterFormSnapshot:
     reuse_extraction_cache: bool
     suppress_title: bool
     show_amplitude_labels: bool
+    make_timelapse: bool = False  # chain session_timelapse.py after the figures
 
 
 def resolve_out_dir(snap: StatsFormSnapshot) -> Path | None:
@@ -181,4 +183,42 @@ def build_poster_argv(
     if poster.show_amplitude_labels:
         args.append("--show-amplitude-labels")
 
+    return args
+
+
+def build_timelapse_argv(
+    session_dir: str, output_dir: str, poster: PosterFormSnapshot, *,
+    compare_session_override: str | None = None,
+    compare_stats_dir_override: str | None = None,
+    compare_label_override: str | None = None,
+) -> list[str]:
+    """Same targeting as build_poster_argv(): read and write the folder the
+    just-finished statistics run wrote. A compare session (an interleaved
+    session's own catch job, or the form's Compare session) is shown side by
+    side, measured in this session's ROI.
+
+    Calibration and orientation are passed as the form has them, but a
+    session's own landmarks.json calibration takes precedence inside the
+    script (calibration belongs to the session's optics, not to the rig
+    setting at analysis time) -- the script prints when that happens."""
+    args = [session_dir, "--stats-dir", output_dir, "--out-dir", output_dir]
+
+    compare_session = compare_session_override or poster.compare_session
+    if compare_session:
+        compare_stats = compare_stats_dir_override or str(Path(compare_session) / DEFAULT_OUT_SUBFOLDER)
+        args += ["--compare-session", compare_session, "--compare-stats-dir", compare_stats]
+        compare_label = compare_label_override or poster.compare_label
+        if compare_label:
+            args += ["--compare-label", compare_label]
+
+    if poster.um_per_px is not None:
+        args += ["--um-per-px", str(poster.um_per_px)]
+    args += ["--anterior-side", poster.anterior_side]
+    if poster.midline_centered:
+        args.append("--midline-centered")
+    else:
+        args += ["--medial-side", poster.medial_side]
+
+    if poster.reuse_extraction_cache:
+        args.append("--reuse-cache")
     return args
