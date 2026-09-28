@@ -57,6 +57,7 @@ from gui.analysis_argv import PosterFormSnapshot, StatsFormSnapshot
 from gui.analysis_job import AnalysisJob, JobStatus, TERMINAL_STATUSES
 from gui.analysis_queue import AnalysisQueue
 from gui.crop_selector import CropSelectorWidget
+from gui.landmark_selector import LandmarkSelectorWidget
 from gui.panel_image_view import PanelImageView
 from gui.rig_settings import SpatialCalibration, load_spatial_calibration, save_spatial_calibration
 from gui.script_runner import ScriptRunner
@@ -112,6 +113,9 @@ class StatisticsWidget(QWidget):
         # re-rendered, so both widgets need to exist first (built above).
         self._crop_selector.preview_changed.connect(self._orientation_preview.set_image_path)
         self._crop_selector.preview_cleared.connect(self._orientation_preview.clear_image)
+        # ...and the Landmarks tab clicks on that same image.
+        self._crop_selector.preview_changed.connect(self._landmarks.set_image_path)
+        self._crop_selector.preview_cleared.connect(self._landmarks.clear_image)
 
     # ── UI construction ───────────────────────────────────────────────────────
 
@@ -302,6 +306,8 @@ class StatisticsWidget(QWidget):
     def _on_calibration_edited(self, _value: float) -> None:
         self._cal_verified = False
         self._save_calibration()
+        if hasattr(self, "_landmarks"):
+            self._landmarks.set_default_um_per_px(self._calibration_um_per_px())
 
     def _on_verify_calibration(self) -> None:
         if self._calibration_um_per_px() is None:
@@ -408,6 +414,7 @@ class StatisticsWidget(QWidget):
         tabs.addTab(self._build_poster_figures_tab(), "Figures")
         tabs.addTab(self._build_trials_tab(), "Trials")
         tabs.addTab(self._build_region_tab(), "Region / Crop")
+        tabs.addTab(self._build_landmarks_tab(), "Landmarks")
         tabs.addTab(self._build_log_override_tab(), "Log override")
         tabs.addTab(self._build_output_perf_tab(), "Output / Performance")
         layout.addWidget(tabs)
@@ -734,6 +741,13 @@ class StatisticsWidget(QWidget):
         )
         f.addRow("Orientation:", orient_widget)
 
+        # Filled in when the session has a landmarks.json (Landmarks tab) -- says
+        # so, so a compass is never silently taken from somewhere unexpected.
+        self._orientation_source_label = QLabel("")
+        self._orientation_source_label.setWordWrap(True)
+        self._orientation_source_label.setStyleSheet(HINT_STYLE)
+        f.addRow("", self._orientation_source_label)
+
         self._fixed_vmax_spin = QDoubleSpinBox()
         self._fixed_vmax_spin.setRange(0.001, 1.0)
         self._fixed_vmax_spin.setDecimals(3)
@@ -773,7 +787,44 @@ class StatisticsWidget(QWidget):
         )
         f.addRow("", self._show_amplitude_labels_check)
 
+        self._timelapse_check = QCheckBox("Also render a time-lapse movie + filmstrip")
+        self._timelapse_check.setToolTip(
+            "After the figures, run session_timelapse.py into the same output folder: a "
+            "trial-averaged dR/R movie aligned to stimulus onset (camera clock, Arduino "
+            "stimulus markers), on one fixed colour scale, with the ROI / out-region trace "
+            "underneath -- plus a filmstrip PNG of the same frames for a poster. Interleaved "
+            "sessions show catch trials side by side. Streams every raw frame again, so it "
+            "adds roughly as long as the figures step."
+        )
+        f.addRow("", self._timelapse_check)
+
         return w
+
+    # ── Landmarks tab ─────────────────────────────────────────────────────────
+
+    def _build_landmarks_tab(self) -> QWidget:
+        self._landmarks = LandmarkSelectorWidget()
+        self._landmarks.set_default_um_per_px(self._calibration_um_per_px())
+        self._landmarks.orientation_loaded.connect(self._apply_landmark_orientation)
+        return self._landmarks
+
+    def _apply_landmark_orientation(self, cs: dict) -> None:
+        """A session's landmarks.json knows which way the head faced; use it
+        for the figure compass instead of the carried-forward default."""
+        i = self._anterior_combo.findData(cs.get("anterior_side"))
+        if i < 0:
+            return
+        self._anterior_combo.setCurrentIndex(i)
+        if cs.get("midline_centered"):
+            self._midline_centered_check.setChecked(True)
+        else:
+            self._midline_centered_check.setChecked(False)
+            j = self._medial_combo.findData(cs.get("medial_side"))
+            if j >= 0:
+                self._medial_combo.setCurrentIndex(j)
+        self._orientation_source_label.setText(
+            "Orientation filled in from this session's landmarks.json (Landmarks tab)."
+        )
 
     # ── Job queue panel ──────────────────────────────────────────────────────
 
@@ -1156,6 +1207,9 @@ class StatisticsWidget(QWidget):
     def _rescan_trials(self) -> None:
         session_dir = self._folder_edit.text().strip()
         self._crop_selector.set_session_dir(session_dir)
+        if hasattr(self, "_landmarks"):      # rescans can fire while the form is still being built
+            self._orientation_source_label.setText("")
+            self._landmarks.set_session_dir(session_dir)
         self._detected_conditions = self._scan_trial_conditions(session_dir) if session_dir else set()
         self._update_interleaved_hint()
         trial_ids = self._scan_trial_ids(session_dir) if session_dir else []
@@ -1261,6 +1315,7 @@ class StatisticsWidget(QWidget):
             reuse_extraction_cache=self._reuse_extraction_cache_check.isChecked(),
             suppress_title=self._suppress_title_check.isChecked(),
             show_amplitude_labels=self._show_amplitude_labels_check.isChecked(),
+            make_timelapse=self._timelapse_check.isChecked(),
         )
 
     def _stats_snapshots_to_queue(self) -> list[StatsFormSnapshot]:

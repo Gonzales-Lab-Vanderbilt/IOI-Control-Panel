@@ -16,6 +16,9 @@ matplotlib>=3.7
 Pillow>=9.0
 tifffile>=2023.1
 scipy>=1.10
+# Only for session_timelapse.py's MP4 output (ships its own ffmpeg binary; no numpy
+# constraint). Without it the time-lapse is written as a GIF instead.
+imageio-ffmpeg>=0.4
 
 # Only intrinsic_visual_stimulus.py (the Python stimulus server) needs this.
 # Skip it if you are not running visual stimuli. pygame has no numpy

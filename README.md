@@ -77,6 +77,8 @@ Read this section before running the rig unattended.
 | `intrinsic_visual_stimulus.py` | Drifting-grating visual stimulus server (UDP, port 55000). |
 | `statistical_analyses.py` | ROI time-course, leave-one-out ROI, pixelwise t-map with permutation test. |
 | `session_poster_figures.py` | Publication-style per-session figure panels. |
+| `session_timelapse.py` | Trial-averaged dR/R movie aligned to stimulus onset, plus a filmstrip PNG. |
+| `ioi_landmarks.py` | Per-session `landmarks.json` (bregma/lambda/midline, orientation, calibration) and its stereotaxic maths. Stdlib only; shared by the GUI and scripts. |
 | `intrinsic_arduino/` | Arduino sync firmware. |
 | `red.py`, `green.py`, `send_stim.py`, `reset_blackfly_roi.py`, … | Single-purpose utilities, each surfaced as a GUI button or small form. |
 | `presets/` | Plain-JSON parameter sets that map onto argparse flags. |
@@ -169,6 +171,35 @@ the only method names the toolchain recognises; a session folder written by an
 older version whose `analysis_method` is not one of them will have every trial
 skipped by the session pass, which then writes no session map and says so.
 
+## Landmarks and time-lapse
+
+**Landmarks (Analysis → Landmarks sub-tab).** Click bregma, lambda, two points on
+the sagittal midline, and optionally a *reference point* whose stereotaxic position
+you know from the surgical record, on the session's green reference. Set which edge
+is anterior, which image side is the animal's left, which hemisphere(s) are in view,
+and **this session's** calibration. Saved as `<session>/landmarks.json`
+(`ioi_landmarks.py` documents the format). Mark a landmark *Estimated* unless the
+suture junction is actually visible; the provenance is carried into every coordinate.
+
+Once a session has a `landmarks.json`:
+- the Figures tab's compass is filled in from it (and says so);
+- `session_poster_figures.py` marks bregma/lambda on the green and targeting
+  references, uses the session's own calibration for the scale bar, and writes
+  `<label>_stereotaxic.json`: the AP/ML (mm) of the ROI, cluster and
+  response-weighted centre, with the origin used and how it was obtained. Those
+  files are what a cross-animal activation map is built from.
+
+**Time-lapse (Figures → "Also render a time-lapse movie + filmstrip").** Chains
+`session_timelapse.py` after the figures. Frame times use the camera clock for
+spacing and the Arduino's `STIM_START` / `POST_FIRST_FRAME_TRIGGER` markers for
+the stimulus, never host timestamps. Each trial is normalised to its own baseline,
+trials are averaged per time point, and every frame shares one colour scale.
+Frames the acquisition did not save (the baseline cushion before the gap frames,
+anything after the last post frame) are shown hatched as *not saved*, never
+interpolated. Interleaved sessions show catch trials side by side in the stim ROI.
+MP4 needs ffmpeg (`imageio-ffmpeg` in `requirements_scripts.txt`); without it the
+movie is written as a GIF.
+
 ## Presets and configuration
 
 Presets are plain JSON whose keys map directly onto argparse flags. They carry
@@ -208,7 +239,10 @@ camera handles) are ever serialized into a preset or any config file.
   `session_poster_figures.py --um-per-px` still defaults to a value measured on
   this lab's rig (3.682 um/px, a 7.07 mm field across 1920 px); pass your own
   value or `--no-scale-bar`. Re-measure for your own optics before quoting a
-  physical distance.
+  physical distance. **A calibration saved in a session's `landmarks.json` takes
+  precedence** over the rig value for that session's figures and time-lapse (the
+  scripts print when it does), because calibration belongs to the optics the
+  session was recorded with, which may not be the rig's current setup.
 
 ## Attribution
 

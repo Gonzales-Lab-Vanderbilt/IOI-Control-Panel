@@ -152,6 +152,7 @@ anything that touches the camera.
 setup.ps1                      ← one-command setup: Python 3.10, packages, .venv, shortcuts
 ioi_control_panel.py           ← GUI entry point (what the setup shortcut runs)
 gui\                           ← GUI modules (PySide6)
+tests\                         ← pytest tests for the landmark maths and time-lapse timing
 build_exe.ps1                  ← optional: builds a standalone .exe via PyInstaller
 make_icon.py                   ← regenerates ioi_icon.ico from the lab logo (build-time only)
 ioi_control_panel.spec         ← PyInstaller spec used by build_exe.ps1
@@ -167,6 +168,8 @@ intrinsic_imaging.py           ← acquisition engine (driven by the above)
 intrinsic_analysis.py          ← offline reanalysis
 statistical_analyses.py        ← stats pipeline (Analysis tab / GUI-driven)
 session_poster_figures.py      ← auto-chained figures after a Statistics run
+session_timelapse.py           ← optional time-lapse movie + filmstrip after the figures
+ioi_landmarks.py               ← landmarks.json format + stereotaxic maths (GUI and scripts)
 convert_raw_to_png.py          ← .raw → PNG converter
 npy_to_tiff.py                 ← .npy → TIFF exporter
 view_npy_image.py              ← quick-look viewer for .npy maps
