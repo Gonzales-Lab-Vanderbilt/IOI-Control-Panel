@@ -317,7 +317,8 @@ def _render_green_reference_figure(session_dir: Path, region_fullres: tuple, roi
 def _draw_landmarks_fullres(ax, landmarks: dict | None) -> None:
     """Bregma/lambda/reference point from the session's landmarks.json (Landmarks
     tab), in full-resolution pixels. A trailing '?' marks anything not directly
-    visible (estimated, or from the surgical record)."""
+    visible (estimated, or from the surgical record). A point placed outside
+    the image is drawn as an arrow at the edge with its distance."""
     if not landmarks:
         return
     halo = [pe.withStroke(linewidth=5, foreground="black")]
@@ -333,13 +334,45 @@ def _draw_landmarks_fullres(ax, landmarks: dict | None) -> None:
     rp = landmarks.get("reference_point")
     if rp:
         marks.append(({"x": rp["x"], "y": rp["y"], "status": "surgical"}, "R"))
+    um = (landmarks.get("calibration") or {}).get("um_per_px")
     for p, tag in marks:
         if not p:
             continue
         sure = p.get("status") == "visible"
+        label = tag + ("" if sure else "?")
+        if draw_offframe_pointer(ax, p, label, ioi_landmarks.FULL_FRAME_BOX, lambda x, y: (x, y),
+                                 um, fontsize=20, arrow_len=110, lw=3.2):
+            continue
         ax.plot(p["x"], p["y"], marker="+", ms=26, mew=3.2, color="white", zorder=9, path_effects=halo)
-        ax.text(p["x"] + 18, p["y"] - 18, tag + ("" if sure else "?"), color="white", fontsize=22,
+        ax.text(p["x"] + 18, p["y"] - 18, label, color="white", fontsize=22,
                 fontweight="bold", zorder=9, path_effects=halo)
+
+
+def draw_offframe_pointer(ax, p: dict, label: str, box: tuple, to_ax, um: float | None,
+                          fontsize: float, arrow_len: float, lw: float = 2.4) -> bool:
+    """If landmark p lies outside `box` (x0, y0, x1, y1, full-res px), draw an
+    arrow at the box edge pointing toward it, labelled with how far outside
+    it is ("B? 1.4 mm"), and return True. Returns False (draws nothing) when
+    p is inside, so the caller draws its usual marker. `to_ax` maps full-res
+    px to the axes' data coordinates; `arrow_len` is in those coordinates."""
+    e = ioi_landmarks.edge_pointer(p["x"], p["y"], box)
+    if e is None:
+        return False
+    halo = [pe.withStroke(linewidth=lw + 3, foreground="black")]
+    ux, uy = e["ux"], e["uy"]
+    ex, ey = to_ax(e["x"], e["y"])
+    tip = (ex - ux * arrow_len * 0.08, ey - uy * arrow_len * 0.08)
+    tail = (tip[0] - ux * arrow_len, tip[1] - uy * arrow_len)
+    ax.annotate("", xy=tip, xytext=tail, zorder=9, annotation_clip=False,
+                arrowprops=dict(arrowstyle="-|>,head_width=0.45,head_length=0.9", color="white", lw=lw,
+                                mutation_scale=4 * lw, shrinkA=0, shrinkB=0, path_effects=halo))
+    dist = f"{e['outside_px'] * um / 1000:.1f} mm" if um else f"{e['outside_px']:.0f} px"
+    ha = "right" if ux > 0.5 else "left" if ux < -0.5 else "center"
+    va = "top" if uy < -0.5 else "bottom" if uy > 0.5 else "center"   # y axis points down
+    gap = arrow_len * 0.12
+    ax.text(tail[0] - ux * gap, tail[1] - uy * gap, f"{label} {dist}", ha=ha, va=va, color="white",
+            fontsize=fontsize, fontweight="bold", zorder=9, path_effects=halo)
+    return True
 
 
 def stereotaxic_summary(landmarks: dict, named_masks: dict, dmap_full: np.ndarray) -> dict:

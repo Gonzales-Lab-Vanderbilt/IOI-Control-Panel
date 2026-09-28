@@ -11,6 +11,13 @@ anything itself: it shows the same full-resolution green-reference PNG the
 Region / Crop tab already renders (CropSelectorWidget.preview_changed), so
 the GUI process still never touches numpy (see README, "What it is not").
 
+Landmarks that are off-frame (e.g. bregma anterior of a posterior window)
+can still be placed: "Room around image" adds a margin of blank canvas, in
+mm, to click into, and every point also has x/y boxes that accept values
+beyond the frame (negative, or past 1920 / 1200). Off-image points are
+always Estimated, and the canvas grows on its own to show any point that
+is already outside.
+
 The saved file is read by session_poster_figures.py and session_timelapse.py
 (landmark markers, per-session calibration, stereotaxic ROI coordinates), and
 its orientation fills in the Figures tab's compass (orientation_loaded).
@@ -19,8 +26,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -34,6 +41,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -53,12 +61,23 @@ _TARGETS = (
     ("ref", "Reference point", "#FF7AF5"),
 )
 _STATUS_ITEMS = (("Visible", "visible"), ("Estimated", "estimated"))
+_MARGIN_MM = (0.0, 1.0, 2.0, 3.0, 5.0)     # "Room around image" choices
+_NOMINAL_UM = 3.682                        # only sizes the margin when no calibration is set
+_FIT_PX = 40.0                             # breathing room kept around an off-image point
+# x/y boxes: one frame beyond each edge (ioi_landmarks.MAX_OUTSIDE_FRAMES);
+# the value one below the minimum shows as "—" (not placed)
+_X_MIN, _X_MAX = -_FULL_W, 2 * _FULL_W - 1
+_Y_MIN, _Y_MAX = -_FULL_H, 2 * _FULL_H - 1
+_EDGE_WORDS = {"top": "above the top edge", "bottom": "below the bottom edge",
+               "left": "left of the left edge", "right": "right of the right edge"}
 
 
 class _LandmarkImage(QLabel):
-    """Green reference at true aspect ratio; clicks come back in full-res
-    sensor pixels; markers are painted over it. Same geometry maths as
-    gui/crop_selector.py's _ImageCropLabel."""
+    """Green reference at true aspect ratio, optionally inset in a margin of
+    blank canvas (`pad`, full-res px on every side) so off-image landmarks can
+    be clicked. Clicks come back in full-res sensor pixels (negative or past
+    the frame in the margin); markers are painted over it. Same geometry
+    maths as gui/crop_selector.py's _ImageCropLabel, plus the margin."""
 
     clicked = Signal(int, int)
     hovered = Signal(int, int)
@@ -72,8 +91,11 @@ class _LandmarkImage(QLabel):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(360, 225)
         self._orig: QPixmap | None = None
+        self._scaled: QPixmap | None = None
         self._scale = 0.0
-        self._ox = self._oy = 0.0
+        self._ox = self._oy = 0.0     # widget position of image pixel (0, 0)
+        self._pad = 0.0               # margin, full-res px
+        self._grid_px = 0.0           # 1 mm in full-res px, for the margin grid (0 = none)
         self.marks: dict[str, tuple[float, float, str, bool]] = {}   # key -> (x, y, colour, dashed)
         self.clear_image()
 
@@ -85,6 +107,7 @@ class _LandmarkImage(QLabel):
 
     def clear_image(self, text: str = _PLACEHOLDER) -> None:
         self._orig = None
+        self._scaled = None
         self._scale = 0.0
         self.setPixmap(QPixmap())
         self.setStyleSheet(f"color:{text_rgba(0.55)}; font-style:italic;")
@@ -97,23 +120,36 @@ class _LandmarkImage(QLabel):
         super().resizeEvent(event)
         self._rescale()
 
+    def set_margin(self, pad_px: float, grid_px: float = 0.0) -> None:
+        pad_px, grid_px = max(0.0, float(pad_px)), max(0.0, float(grid_px))
+        if (pad_px, grid_px) != (self._pad, self._grid_px):
+            self._pad, self._grid_px = pad_px, grid_px
+            self._rescale()
+
+    def margin(self) -> float:
+        return self._pad
+
     def _rescale(self) -> None:
         if self._orig is None or self.width() <= 0:
             return
-        scaled = self._orig.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
-        self.setPixmap(scaled)
-        self._scale = scaled.width() / _FULL_W if scaled.width() else 0.0
-        self._ox = (self.width() - scaled.width()) / 2.0
-        self._oy = (self.height() - scaled.height()) / 2.0
+        vw, vh = _FULL_W + 2 * self._pad, _FULL_H + 2 * self._pad
+        self._scale = min(self.width() / vw, self.height() / vh)
+        self._scaled = self._orig.scaled(max(1, round(_FULL_W * self._scale)), max(1, round(_FULL_H * self._scale)),
+                                         Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation)
+        self._ox = (self.width() - vw * self._scale) / 2.0 + self._pad * self._scale
+        self._oy = (self.height() - vh * self._scale) / 2.0 + self._pad * self._scale
         self.update()
 
     def to_image(self, pt: QPoint) -> tuple[int, int] | None:
+        """Full-res pixel under a widget point, anywhere on the canvas
+        (image or margin); None off the canvas."""
         if self._orig is None or self._scale <= 0:
             return None
         ix = round((pt.x() - self._ox) / self._scale)
         iy = round((pt.y() - self._oy) / self._scale)
-        if not (0 <= ix < _FULL_W and 0 <= iy < _FULL_H):
+        p = self._pad
+        if not (-p <= ix < _FULL_W + p and -p <= iy < _FULL_H + p):
             return None
         return ix, iy
 
@@ -139,10 +175,37 @@ class _LandmarkImage(QLabel):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
-        if self._orig is None or self._scale <= 0:
+        if self._orig is None or self._scale <= 0 or self._scaled is None:
             return
         qp = QPainter(self)
         qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        img = QRectF(self._ox, self._oy, _FULL_W * self._scale, _FULL_H * self._scale)
+        if self._pad > 0:
+            m = self._pad * self._scale
+            canvas = img.adjusted(-m, -m, m, m)
+            qp.fillRect(canvas, QColor(28, 28, 30))
+            if self._grid_px * self._scale >= 6:     # 1 mm grid in the margin, aligned to the image edges
+                margin_only = QPainterPath()
+                margin_only.addRect(canvas)
+                inner = QPainterPath()
+                inner.addRect(img)
+                qp.save()
+                qp.setClipPath(margin_only.subtracted(inner))
+                qp.setPen(QPen(QColor(255, 255, 255, 38), 1.0))
+                g = self._grid_px
+                k = -int(self._pad // g)
+                while k * g <= _FULL_W + self._pad:
+                    qp.drawLine(self.to_widget(k * g, -self._pad), self.to_widget(k * g, _FULL_H + self._pad))
+                    k += 1
+                k = -int(self._pad // g)
+                while k * g <= _FULL_H + self._pad:
+                    qp.drawLine(self.to_widget(-self._pad, k * g), self.to_widget(_FULL_W + self._pad, k * g))
+                    k += 1
+                qp.restore()
+        qp.drawPixmap(img.topLeft(), self._scaled)
+        if self._pad > 0:
+            qp.setPen(QPen(QColor(255, 255, 255, 110), 1.0))
+            qp.drawRect(img)
         # midline: a line through both points, extended across the image
         if "mid0" in self.marks and "mid1" in self.marks:
             (x0, y0, *_), (x1, y1, *_) = self.marks["mid0"], self.marks["mid1"]
@@ -188,6 +251,7 @@ class LandmarkSelectorWidget(QWidget):
         self._dirty = False
         self._loading = False
         self._default_um: float | None = None
+        self._xy: dict[str, tuple[QSpinBox, QSpinBox]] = {}
         self._build_ui()
         self._refresh()
 
@@ -202,7 +266,9 @@ class LandmarkSelectorWidget(QWidget):
             "Pick what the next click places, then click it on the image. Mark bregma and lambda as "
             "Estimated unless the suture junction is actually visible. With neither visible, click a "
             "point whose position you know from the surgical record (e.g. the window centre) as the "
-            "Reference point and enter its stereotaxic coordinates. Saved per session as landmarks.json."
+            "Reference point and enter its stereotaxic coordinates. If bregma or lambda is off the image, "
+            "add room around it and click where it would be, or type x/y beyond the frame. "
+            "Saved per session as landmarks.json."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(HINT_STYLE)
@@ -219,6 +285,15 @@ class LandmarkSelectorWidget(QWidget):
             pick.addWidget(rb)
         self._target_group.button(0).setChecked(True)
         pick.addStretch()
+        pick.addWidget(QLabel("Room around image:"))
+        self._margin = QComboBox()
+        for mm in _MARGIN_MM:
+            self._margin.addItem("None" if mm == 0 else f"{mm:g} mm", mm)
+        self._margin.setToolTip("Blank canvas around the image, so an off-image bregma/lambda can be clicked "
+                                "where it would be. Grid lines in the margin are 1 mm apart. Grows by itself "
+                                "to show points already placed outside.")
+        self._margin.currentIndexChanged.connect(lambda _i: self._apply_margin())
+        pick.addWidget(self._margin)
         v.addLayout(pick)
 
         self._image = _LandmarkImage()
@@ -236,31 +311,38 @@ class LandmarkSelectorWidget(QWidget):
         self._status_combos: dict[str, QComboBox] = {}
         for row, (key, text) in enumerate((("bregma", "Bregma"), ("lambda", "Lambda"))):
             grid.addWidget(QLabel(f"{text}:"), row, 0)
-            lab = QLabel("not placed")
-            lab.setObjectName(f"{key}_pos")
-            grid.addWidget(lab, row, 1)
+            xs, ys = self._xy_boxes(key)
+            grid.addWidget(xs, row, 1)
+            grid.addWidget(ys, row, 2)
             cb = QComboBox()
             for t, d in _STATUS_ITEMS:
                 cb.addItem(t, d)
             cb.setCurrentIndex(1)   # Estimated unless the user says otherwise
             cb.currentIndexChanged.connect(lambda _i, k=key: self._on_status(k))
             self._status_combos[key] = cb
-            grid.addWidget(cb, row, 2)
+            grid.addWidget(cb, row, 3)
             clr = QPushButton("Clear")
             clr.clicked.connect(lambda _c=False, k=key: self._clear_point(k))
-            grid.addWidget(clr, row, 3)
+            grid.addWidget(clr, row, 4)
+            lab = QLabel("not placed")
+            lab.setObjectName(f"{key}_pos")
+            lab.setStyleSheet(HINT_STYLE)
+            grid.addWidget(lab, row, 5)
         grid.addWidget(QLabel("Midline:"), 2, 0)
         self._mid_label = QLabel("not placed")
-        grid.addWidget(self._mid_label, 2, 1, 1, 2)
+        grid.addWidget(self._mid_label, 2, 1, 1, 3)
         clr_mid = QPushButton("Clear")
         clr_mid.clicked.connect(lambda: self._clear_point("midline"))
-        grid.addWidget(clr_mid, 2, 3)
-        grid.setColumnStretch(1, 1)
+        grid.addWidget(clr_mid, 2, 4)
+        grid.setColumnStretch(5, 1)
         v.addLayout(grid)
 
         ref = QHBoxLayout()
         ref.addWidget(QLabel("Reference point:"))
-        self._ref_label = QLabel("not placed")
+        for box in self._xy_boxes("ref"):
+            ref.addWidget(box)
+        self._ref_label = QLabel("")
+        self._ref_label.setStyleSheet(HINT_STYLE)
         ref.addWidget(self._ref_label)
         ref.addSpacing(8)
         ref.addWidget(QLabel("AP"))
@@ -351,6 +433,24 @@ class LandmarkSelectorWidget(QWidget):
         self._file_label.setStyleSheet(HINT_STYLE)
         btns.addWidget(self._file_label, stretch=1)
         v.addLayout(btns)
+
+    def _xy_boxes(self, key: str) -> tuple[QSpinBox, QSpinBox]:
+        """x and y entry for a point, full-res px; accepts values beyond the
+        frame for off-image landmarks. Commits on Enter / focus-out / arrows."""
+        boxes = []
+        for axis, lo, hi, full in (("x", _X_MIN, _X_MAX, _FULL_W), ("y", _Y_MIN, _Y_MAX, _FULL_H)):
+            sb = QSpinBox()
+            sb.setRange(lo - 1, hi)          # lo - 1 is the "not placed" value
+            sb.setSpecialValueText(f"{axis} —")
+            sb.setPrefix(f"{axis} ")
+            sb.setKeyboardTracking(False)
+            sb.setValue(lo - 1)
+            sb.setToolTip(f"{axis} in full-resolution pixels (image is 0–{full - 1}). "
+                          f"Negative or ≥ {full} places the point outside the image.")
+            sb.valueChanged.connect(lambda _v, k=key: self._on_xy_edit(k))
+            boxes.append(sb)
+        self._xy[key] = (boxes[0], boxes[1])
+        return boxes[0], boxes[1]
 
     @staticmethod
     def _mm_spin() -> QDoubleSpinBox:
@@ -489,7 +589,7 @@ class LandmarkSelectorWidget(QWidget):
         pts = self._lm.setdefault("points", {"bregma": None, "lambda": None, "midline": []})
         t = self._current_target()
         if t in ("bregma", "lambda"):
-            pts[t] = {"x": x, "y": y, "status": self._status_combos[t].currentData()}
+            self._place(t, x, y)
         elif t in ("mid0", "mid1"):
             mid = list(pts.get("midline") or [])
             while len(mid) < 2:
@@ -498,11 +598,35 @@ class LandmarkSelectorWidget(QWidget):
             # a half-placed midline stays in memory; validate() blocks saving until both exist
             pts["midline"] = mid
         elif t == "ref":
-            self._lm["reference_point"] = {"x": x, "y": y, "ap_mm": self._ref_ap.value(),
-                                           "ml_mm": self._ref_ml.value(), "what": self._ref_what.text().strip()}
+            self._place("ref", x, y)
         # auto-advance within the midline pair; otherwise stay on the same target
         if t == "mid0":
             self._target_group.button(3).setChecked(True)
+        self._mark_dirty()
+
+    def _place(self, key: str, x: int, y: int) -> None:
+        """Put bregma / lambda / the reference point at (x, y). A point
+        outside the image can only be an estimate, so its status follows."""
+        if key == "ref":
+            self._lm["reference_point"] = {"x": x, "y": y, "ap_mm": self._ref_ap.value(),
+                                           "ml_mm": self._ref_ml.value(), "what": self._ref_what.text().strip()}
+            return
+        status = self._status_combos[key].currentData()
+        if not lmk.in_field({"x": x, "y": y}) and status == "visible":
+            status = "estimated"
+            cb = self._status_combos[key]
+            cb.blockSignals(True)
+            self._set_combo(cb, status)
+            cb.blockSignals(False)
+        self._lm.setdefault("points", {})[key] = {"x": x, "y": y, "status": status}
+
+    def _on_xy_edit(self, key: str) -> None:
+        if self._loading or not self._session_dir:
+            return
+        xs, ys = self._xy[key]
+        if xs.value() == xs.minimum() or ys.value() == ys.minimum():
+            return                       # wait until both are filled in
+        self._place(key, xs.value(), ys.value())
         self._mark_dirty()
 
     def _clear_point(self, key: str) -> None:
@@ -560,7 +684,7 @@ class LandmarkSelectorWidget(QWidget):
         if self._loading:
             return
         self._write_cal_into_lm()
-        self._mark_dirty()
+        self._mark_dirty()     # _refresh() re-sizes the margin and the "mm off-image" notes
 
     def _write_cal_into_lm(self) -> None:
         um = self._um.value()
@@ -583,24 +707,25 @@ class LandmarkSelectorWidget(QWidget):
         for key in ("bregma", "lambda"):
             p = pts.get(key)
             lab = self.findChild(QLabel, f"{key}_pos")
+            self._show_xy(key, p)
             if p:
                 marks[key] = (p["x"], p["y"], colours[key], p.get("status") != "visible")
-                if lab:
-                    lab.setText(f"x {p['x']}, y {p['y']}")
-            elif lab:
-                lab.setText("not placed")
+            if lab:
+                lab.setText(self._where_text(p) if p else "not placed")
         mid = [m for m in (pts.get("midline") or []) if m]
         for i, m in enumerate(pts.get("midline") or []):
             if m:
                 marks[f"mid{i}"] = (m["x"], m["y"], colours[f"mid{i}"], False)
         self._mid_label.setText({0: "not placed", 1: "1 of 2 points placed"}.get(len(mid), "2 points placed"))
         rp = self._lm.get("reference_point")
+        self._show_xy("ref", rp)
         if rp:
             marks["ref"] = (rp["x"], rp["y"], colours["ref"], True)
-            self._ref_label.setText(f"x {rp['x']}, y {rp['y']}")
+            self._ref_label.setText(self._where_text(rp) if not lmk.in_field(rp) else "")
         else:
-            self._ref_label.setText("not placed")
+            self._ref_label.setText("")
         self._image.marks = marks
+        self._apply_margin()
         self._image.update()
 
         problems = [p for p in lmk.validate(self._lm) if not p.startswith("schema")]
@@ -615,6 +740,36 @@ class LandmarkSelectorWidget(QWidget):
         self._save_btn.setEnabled(bool(self._session_dir) and not problems)
         self._revert_btn.setEnabled(bool(self._session_dir))
 
+    def _show_xy(self, key: str, p: dict | None) -> None:
+        for sb, v in zip(self._xy[key], (p["x"], p["y"]) if p else (None, None)):
+            sb.blockSignals(True)
+            sb.setValue(sb.minimum() if v is None else int(round(v)))
+            sb.blockSignals(False)
+
+    def _um_now(self) -> float | None:
+        um = self._um.value()
+        return um if um > 0 else self._default_um
+
+    def _where_text(self, p: dict) -> str:
+        """'' on the image, else how far past which edge(s), in mm when calibrated."""
+        out = lmk.outside_edges(p["x"], p["y"])
+        if not out:
+            return ""
+        um = self._um_now()
+        parts = [(f"{d * um / 1000:.2f} mm " if um else f"{d:.0f} px ") + _EDGE_WORDS[side]
+                 for side, d in out.items()]
+        return "off-image: " + ", ".join(parts)
+
+    def _apply_margin(self) -> None:
+        """Canvas margin = the chosen room, grown to show every placed point."""
+        um = self._um_now() or _NOMINAL_UM
+        px_per_mm = 1000.0 / um
+        pad = (self._margin.currentData() or 0.0) * px_per_mm
+        for x, y, *_ in self._image.marks.values():
+            if key_out := lmk.outside_edges(x, y):
+                pad = max(pad, max(key_out.values()) + _FIT_PX)
+        self._image.set_margin(pad, px_per_mm if self._um_now() else 0.0)
+
     def _coverage_text(self) -> str:
         try:
             probe = lmk.stereotaxic(self._lm, _FULL_W / 2, _FULL_H / 2)
@@ -627,12 +782,14 @@ class LandmarkSelectorWidget(QWidget):
                 f"Image centre is AP {probe['ap_mm']:+.2f}, ML {probe['ml_mm']:+.2f} mm.")
 
     def _on_hover(self, x: int, y: int) -> None:
+        where = self._where_text({"x": x, "y": y})
+        where = f"   ({where})" if where else ""
         try:
             s = lmk.stereotaxic(self._lm, x, y)
             self._hover_label.setText(f"x {x}, y {y}   →   AP {s['ap_mm']:+.2f} mm, ML {s['ml_mm']:+.2f} mm "
-                                      f"(from {s['origin']})")
+                                      f"(from {s['origin']}){where}")
         except lmk.LandmarkError:
-            self._hover_label.setText(f"x {x}, y {y}")
+            self._hover_label.setText(f"x {x}, y {y}{where}")
 
     @staticmethod
     def _set_combo(combo: QComboBox, data) -> None:
