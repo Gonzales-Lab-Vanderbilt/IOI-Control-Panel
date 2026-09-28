@@ -359,16 +359,24 @@ def draw_compass(ax, shape, orient: dict, fs: float) -> None:
                 color="white", zorder=10, path_effects=[pe.withStroke(linewidth=2.5, foreground="black")])
 
 
-def draw_landmarks(ax, lm: dict | None, region: tuple, b: int, fs: float) -> None:
+def draw_landmarks(ax, lm: dict | None, region: tuple, b: int, fs: float, um: float | None = None) -> None:
+    """Bregma / lambda on a cropped, b-binned panel. One outside the crop
+    (off-image, or just outside the analysis region) becomes an arrow at the
+    panel edge with its distance, instead of being clipped away."""
     if not lm:
         return
-    x0, y0 = region[0], region[1]
+    x0, y0, w, h = region[:4]
+    box = (x0, y0, x0 + w - 1, y0 + h - 1)
     for key, tag in (("bregma", "B"), ("lambda", "L")):
         p = (lm.get("points") or {}).get(key)
         if not p:
             continue
         x, y = (p["x"] - x0) / b, (p["y"] - y0) / b
         est = p.get("status") != "visible"
+        if spf.draw_offframe_pointer(ax, p, tag + ("?" if est else ""), box,
+                                     lambda px, py: ((px - x0) / b, (py - y0) / b), um,
+                                     fontsize=fs * 0.9, arrow_len=0.16 * min(w, h) / b, lw=1.8):
+            continue
         ax.plot(x, y, marker="+", ms=14, mew=2.2, color="white", zorder=11,
                 path_effects=[pe.withStroke(linewidth=4, foreground="black")])
         ax.text(x + 6, y - 6, tag + ("?" if est else ""), color="white", fontsize=fs, fontweight="bold",
@@ -607,7 +615,7 @@ def main(argv: list) -> int:
             if um_b:
                 draw_scalebar(axi, shape, um_b, 11)
             draw_compass(axi, shape, orient, 11)
-        draw_landmarks(axi, lm, region, b, 11)
+        draw_landmarks(axi, lm, region, b, 11, um)
         axes_img.append(axi); overlays.append(ov)
     cax = fig.add_axes([0.885, img_top + 0.05, cbw, img_h - 0.10])
     cb = fig.colorbar(plt.cm.ScalarMappable(Normalize(-vmax, vmax), cmap="RdBu"), cax=cax)
@@ -705,7 +713,7 @@ def main(argv: list) -> int:
                     if um_b:
                         draw_scalebar(axi, shape, um_b, 6)
                     draw_compass(axi, shape, orient, 6)
-            draw_landmarks(axi, lm, region, b, 6)
+            draw_landmarks(axi, lm, region, b, 6, um)
     y_last = top_ - nrow * tile_h - (nrow - 1) * 0.02
     cax = fig.add_axes([right + 0.012, y_last + 0.1 * tile_h, 0.012, nrow * tile_h - 0.2 * tile_h])
     cb = fig.colorbar(plt.cm.ScalarMappable(Normalize(-vmax, vmax), cmap="RdBu"), cax=cax)

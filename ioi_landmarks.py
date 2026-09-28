@@ -17,7 +17,12 @@ x right, y down, the same frame as the green reference and every crop):
   points           bregma / lambda, each with how it was obtained:
                      "visible"        the suture junction can be seen
                      "estimated"      judged from partial sutures / anatomy
-                   plus up to two points on the sagittal midline
+                   plus up to two points on the sagittal midline.
+                   Points may lie OUTSIDE the image (negative, or past
+                   1920 / 1200) when the landmark is off-frame and its
+                   position is extrapolated; such a point is always
+                   "estimated", and save() stamps "in_field": false on it
+                   so maps can tell extrapolated landmarks apart.
   reference_point  optional: any clicked point whose stereotaxic position is
                    known from the surgical record (e.g. the craniotomy or
                    window centre at AP -3.5, ML +2.5 from bregma). Lets an
@@ -32,8 +37,9 @@ stereotaxic() turns any image point into (AP, ML) millimetres:
   ML  + = animal's RIGHT, measured perpendicular to the midline
 The origin is bregma when available, else the reference point's implied
 bregma, else lambda (reported as lambda-relative). Every result says which
-origin it used and how each input was obtained, so a map can show
-visible-landmark and estimated sessions differently.
+origin it used, how each input was obtained, and whether the origin lies
+on the image, so a map can show visible-landmark, estimated and
+extrapolated sessions differently.
 """
 from __future__ import annotations
 
@@ -50,6 +56,10 @@ SIDES = ("left", "right", "top", "bottom")
 OPPOSITE = {"left": "right", "right": "left", "top": "bottom", "bottom": "top"}
 HEMISPHERES = ("left", "right", "both")
 POINT_STATUSES = ("visible", "estimated")
+# how far outside the frame a point may be placed, in frame widths/heights
+# (one frame ~= 7 x 4.4 mm at 3.682 um/px; further than that is almost
+# certainly a typo, not an extrapolation)
+MAX_OUTSIDE_FRAMES = 1.0
 _SIDE_VECTORS = {"left": (-1.0, 0.0), "right": (1.0, 0.0), "top": (0.0, -1.0), "bottom": (0.0, 1.0)}
 
 
@@ -106,6 +116,8 @@ def validate(lm: dict) -> list[str]:
             continue
         if not _is_xy(p):
             problems.append(f"{name} needs numeric x and y")
+        elif p.get("status") == "visible" and not in_field(p):
+            problems.append(f"{name} is outside the image, so it can't be 'visible': mark it Estimated")
         if p.get("status") not in POINT_STATUSES:
             problems.append(f"{name} status must be one of {POINT_STATUSES}")
     mid = pts.get("midline") or []
@@ -123,6 +135,11 @@ def validate(lm: dict) -> list[str]:
         for k in ("ap_mm", "ml_mm"):
             if not isinstance(rp.get(k), (int, float)):
                 problems.append(f"reference_point needs numeric {k}")
+    named = [(n, pts.get(n)) for n in ("bregma", "lambda")] + [("reference_point", rp)]
+    named += [(f"midline point {i + 1}", m) for i, m in enumerate(mid if isinstance(mid, list) else [])]
+    for name, p in named:
+        if _is_xy(p) and not _within_limits(p["x"], p["y"]):
+            problems.append(f"{name} is more than one image width/height outside the frame: check its x/y")
     um = (lm.get("calibration") or {}).get("um_per_px")
     if um is not None and not (isinstance(um, (int, float)) and um > 0):
         problems.append("calibration um_per_px must be a positive number")
@@ -131,6 +148,53 @@ def validate(lm: dict) -> list[str]:
 
 def _is_xy(p) -> bool:
     return isinstance(p, dict) and isinstance(p.get("x"), (int, float)) and isinstance(p.get("y"), (int, float))
+
+
+def _within_limits(x: float, y: float) -> bool:
+    mx, my = MAX_OUTSIDE_FRAMES * SENSOR_W, MAX_OUTSIDE_FRAMES * SENSOR_H
+    return -mx <= x <= SENSOR_W - 1 + mx and -my <= y <= SENSOR_H - 1 + my
+
+
+# ── inside / outside the image ───────────────────────────────────────────────
+
+FULL_FRAME_BOX = (0, 0, SENSOR_W - 1, SENSOR_H - 1)
+
+
+def in_field(p, box=FULL_FRAME_BOX) -> bool:
+    """True if point p ({'x', 'y'}) lies on the image (or inside box =
+    (x0, y0, x1, y1), inclusive pixel coordinates)."""
+    return _is_xy(p) and box[0] <= p["x"] <= box[2] and box[1] <= p["y"] <= box[3]
+
+
+def outside_edges(x: float, y: float, box=FULL_FRAME_BOX) -> dict:
+    """How far (px) the point lies beyond each image edge it is past, e.g.
+    {'top': 212.0} or {'top': 40.0, 'left': 95.0}; {} when inside."""
+    out = {}
+    if y < box[1]:
+        out["top"] = box[1] - y
+    elif y > box[3]:
+        out["bottom"] = y - box[3]
+    if x < box[0]:
+        out["left"] = box[0] - x
+    elif x > box[2]:
+        out["right"] = x - box[2]
+    return out
+
+
+def edge_pointer(x: float, y: float, box=FULL_FRAME_BOX, inset: float = 0.0) -> dict | None:
+    """For drawing an off-image point as 'it is that way' at the image edge.
+    None when (x, y) is inside box. Otherwise: the nearest point on the box
+    (pulled in by `inset` so a marker fits), the unit direction from there to
+    the real point, and its distance outside the box in px."""
+    x0, y0, x1, y1 = box
+    cx, cy = min(max(x, x0), x1), min(max(y, y0), y1)
+    dist = math.hypot(x - cx, y - cy)
+    if dist == 0:
+        return None
+    return {
+        "x": min(max(x, x0 + inset), x1 - inset), "y": min(max(y, y0 + inset), y1 - inset),
+        "ux": (x - cx) / dist, "uy": (y - cy) / dist, "outside_px": dist,
+    }
 
 
 # ── file I/O ─────────────────────────────────────────────────────────────────
@@ -161,7 +225,11 @@ def save(session_dir, lm: dict) -> Path:
     problems = validate(lm)
     if problems:
         raise LandmarkError("; ".join(problems))
-    lm = dict(lm)
+    lm = json.loads(json.dumps(lm))           # deep copy: don't stamp the caller's dict
+    for p in ((lm.get("points") or {}).get("bregma"), (lm.get("points") or {}).get("lambda"),
+              lm.get("reference_point")):
+        if p:
+            p["in_field"] = in_field(p)       # false = extrapolated beyond the image
     lm["annotated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     p = path_for(session_dir)
     p.write_text(json.dumps(lm, indent=2), encoding="utf-8")
@@ -275,6 +343,8 @@ def stereotaxic(lm: dict, x: float, y: float) -> dict:
     return {
         "ap_mm": ap, "ml_mm": ml,
         "origin": origin, "origin_status": origin_status,
+        # False = the origin lies outside the image (extrapolated / implied)
+        "origin_in_field": in_field({"x": ox, "y": oy}),
         "ml_measured_from": ml_ref, "axes_from": ax_["source"],
         "um_per_px": um,
     }

@@ -181,6 +181,14 @@ and **this session's** calibration. Saved as `<session>/landmarks.json`
 (`ioi_landmarks.py` documents the format). Mark a landmark *Estimated* unless the
 suture junction is actually visible; the provenance is carried into every coordinate.
 
+*Landmarks off the image.* When the window doesn't include bregma or lambda, set
+**Room around image** (1–5 mm of blank canvas with a 1 mm grid) and click where the
+landmark would be, or type its x/y beyond the frame (negative, or past 1920 / 1200).
+Off-image points are always *Estimated*, get `"in_field": false` in the file, and
+every stereotaxic result reports `origin_in_field`, so a map can show extrapolated
+sessions differently. Figures draw them as an arrow at the image edge with the
+distance ("B? 1.5 mm").
+
 Once a session has a `landmarks.json`:
 - the Figures tab's compass is filled in from it (and says so);
 - `session_poster_figures.py` marks bregma/lambda on the green and targeting

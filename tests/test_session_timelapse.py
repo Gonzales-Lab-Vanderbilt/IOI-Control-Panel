@@ -90,3 +90,20 @@ def test_median_demean_ignores_a_focal_response():
     out = st.display_stack(res, np.ones((20, 20), bool), b=4, demean=True, smooth_frames=1)
     assert abs(np.nanmedian(out[0])) < 1e-12                  # background stays at zero
     assert out[0, 19, 19] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_landmark_outside_the_crop_becomes_an_edge_arrow():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    lm = {"points": {"bregma": {"x": 900, "y": -410, "status": "estimated"},      # off-image
+                     "lambda": {"x": 700, "y": 600, "status": "visible"}}}         # inside the crop
+    fig, ax = plt.subplots()
+    ax.set_xlim(0, 250); ax.set_ylim(175, 0)
+    st.draw_landmarks(ax, lm, (400, 300, 1000, 700), 4, 8, um=3.682)
+    texts = [t.get_text() for t in ax.texts]
+    assert "B? 2.6 mm" in texts and "L" in texts                                  # (300 + 410) px * 3.682 um
+    arrow = [a for a in ax.texts if a.get_text() == "" and a.arrow_patch is not None][0]
+    tip_x, tip_y = arrow.xy
+    assert 0 <= tip_x <= 250 and 0 <= tip_y <= 175                                 # drawn at the panel edge
+    plt.close(fig)

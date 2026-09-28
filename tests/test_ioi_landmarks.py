@@ -128,7 +128,9 @@ def test_save_load_round_trip(tmp_path):
     p = lmk.save(tmp_path, lm)
     assert p.name == "landmarks.json"
     back = lmk.load(tmp_path)
+    assert back["points"]["bregma"].pop("in_field") is True          # stamped on save
     assert back["points"] == lm["points"] and back["annotated_at"]
+    assert "in_field" not in lm["points"]["bregma"]                  # caller's dict untouched
     assert lmk.load(tmp_path / "nowhere") is None
 
 
@@ -138,3 +140,44 @@ def test_save_refuses_inconsistent_and_load_refuses_foreign(tmp_path):
     (tmp_path / "landmarks.json").write_text(json.dumps({"schema": "something-else"}))
     with pytest.raises(lmk.LandmarkError):
         lmk.load(tmp_path)
+
+
+# ── landmarks outside the image ──────────────────────────────────────────────
+
+def test_off_image_bregma_extrapolates_and_is_flagged(tmp_path):
+    # bregma 1.5 mm above the top edge (image shows only posterior cortex)
+    by = -round(1.5 * PX_PER_MM)
+    lm = make(bregma=(960, by), status="estimated")
+    assert lmk.validate(lm) == []
+    s = lmk.stereotaxic(lm, 960, 0)                    # top edge of the image
+    assert s["ap_mm"] == pytest.approx(-1.5, abs=0.01)
+    assert s["origin_in_field"] is False
+    assert lmk.stereotaxic(make(), 960, 0)["origin_in_field"] is True
+    lmk.save(tmp_path, lm)
+    back = lmk.load(tmp_path)
+    assert back["points"]["bregma"]["in_field"] is False
+    assert back["points"]["bregma"]["y"] == by
+
+
+def test_off_image_point_cannot_be_visible_or_absurdly_far():
+    probs = lmk.validate(make(bregma=(960, -50), status="visible"))
+    assert any("outside the image" in p and "Estimated" in p for p in probs)
+    probs = lmk.validate(make(bregma=(960, -1300), status="estimated"))   # > one frame height out
+    assert any("check its x/y" in p for p in probs)
+    lm = make(lam=(960, 1200 + 1100))                                       # within one frame: fine
+    assert lmk.validate(lm) == []
+
+
+def test_edge_helpers():
+    assert lmk.in_field({"x": 0, "y": 0}) and lmk.in_field({"x": 1919, "y": 1199})
+    assert not lmk.in_field({"x": 1920, "y": 5}) and not lmk.in_field({"x": 5, "y": -1})
+    assert lmk.outside_edges(100, -40) == {"top": 40}
+    assert lmk.outside_edges(-10, 1300) == {"bottom": 101, "left": 10}
+    assert lmk.edge_pointer(500, 500) is None
+    e = lmk.edge_pointer(500, -300, inset=20)
+    assert (e["x"], e["y"], e["ux"], e["uy"], e["outside_px"]) == (500, 20, 0.0, -1.0, 300)
+    e = lmk.edge_pointer(-30, -40)                     # off a corner: points diagonally
+    assert (e["x"], e["y"]) == (0, 0) and e["outside_px"] == pytest.approx(50)
+    assert (e["ux"], e["uy"]) == pytest.approx((-0.6, -0.8))
+    # a crop region box: inside the image but outside the crop still gets a pointer
+    assert lmk.edge_pointer(100, 100, box=(400, 300, 1399, 999)) is not None
