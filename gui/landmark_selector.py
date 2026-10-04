@@ -103,6 +103,7 @@ class _LandmarkImage(QLabel):
         self._orig = pixmap
         self.setText("")
         self.setStyleSheet("")
+        self.updateGeometry()
         self._rescale()
 
     def clear_image(self, text: str = _PLACEHOLDER) -> None:
@@ -112,9 +113,16 @@ class _LandmarkImage(QLabel):
         self.setPixmap(QPixmap())
         self.setStyleSheet(f"color:{text_rgba(0.55)}; font-style:italic;")
         self.setText(text)
+        self.updateGeometry()
 
     def has_image(self) -> bool:
         return self._orig is not None
+
+    def heightForWidth(self, width: int) -> int: # noqa: N802
+        if self._orig is None or width <= 0:
+            return super().heightForWidth(width)
+        vw, vh = _FULL_W + 2 * self._pad, _FULL_H + 2 * self._pad
+        return round(vh * width / vw)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -124,6 +132,7 @@ class _LandmarkImage(QLabel):
         pad_px, grid_px = max(0.0, float(pad_px)), max(0.0, float(grid_px))
         if (pad_px, grid_px) != (self._pad, self._grid_px):
             self._pad, self._grid_px = pad_px, grid_px
+            self.updateGeometry()
             self._rescale()
 
     def margin(self) -> float:
@@ -599,9 +608,6 @@ class LandmarkSelectorWidget(QWidget):
             pts["midline"] = mid
         elif t == "ref":
             self._place("ref", x, y)
-        # auto-advance within the midline pair; otherwise stay on the same target
-        if t == "mid0":
-            self._target_group.button(3).setChecked(True)
         self._mark_dirty()
 
     def _place(self, key: str, x: int, y: int) -> None:
