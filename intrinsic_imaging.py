@@ -2792,6 +2792,7 @@ class BlackflyCapture:
                 else:
                     phase = "idle"
 
+                last_activity = time.time()
                 while True:
                     # Grab the frame BEFORE reading markers. The Arduino emits a
                     # phase-boundary marker at the same instant it fires that
@@ -2803,11 +2804,14 @@ class BlackflyCapture:
                     image = None
                     try:
                         image = self.cam.GetNextImage(100)
+                        if image is not None:
+                            last_activity = time.time()
                     except PySpin.SpinnakerException:
                         image = None
 
                     for marker in self._poll_all_markers(markers_seen, trial_index):
                         last_marker = marker
+                        last_activity = time.time()
                         if marker == "RED_BASELINE_START":
                             red_baseline_requested = True
                         elif marker == "GAP_START":
@@ -2836,6 +2840,11 @@ class BlackflyCapture:
                             trial_end_requested = True
                             if trial_end_request_time is None:
                                 trial_end_request_time = time.time()
+
+                    if time.time() - last_activity > self.cfg.marker_timeout_s:
+                        raise TimeoutError(
+                            f"Trial {trial_index} timed out: no markers or frames for {self.cfg.marker_timeout_s:.1f} s.\n"
+                            "Please check the Arduino and camera connections.")
 
                     # Each frame's phase label comes from its own trigger index
                     # (see below), so once the firmware reports trigger indices
