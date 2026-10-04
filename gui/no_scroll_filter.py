@@ -1,18 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Gonzales Lab, Vanderbilt University
 """
-Application-wide fix for the classic "scrolled past a spin box / dropdown
-and it silently changed value" accident. QAbstractSpinBox and QComboBox
-both react to the mouse wheel by default even when the cursor is just
+Application-wide fix for the classic "scrolled past a spin box / dropdown / tab bar
+and it silently changed value" accident. QAbstractSpinBox, QComboBox, and
+QTabBar react to the mouse wheel by default even when the cursor is just
 passing over them on the way down a long form (e.g. Advanced settings
 panels, the Utilities tab's scroll area) — this filter blocks that and
 forwards the wheel event to the widget's parent instead, so the page
 scrolls normally and the value underneath the cursor never changes.
 
-That alone isn't quite enough: both widget classes also default to
-Qt.WheelFocus, which grants keyboard focus as a side effect of a wheel
-event reaching them (handled by Qt before the event ever reaches our
-filter above), so the text cursor visibly jumps into the box even though
+That alone isn't quite enough: the SpinBox and ComboBox widget classes
+also default to Qt.WheelFocus, which grants keyboard focus as a side effect of a wheel
+event reaching them, so the text cursor visibly jumps into the box even though
 its value doesn't change. strip_wheel_focus() downgrades them to
 StrongFocus (keeps tab/click focus, drops the wheel-triggered grab).
 
@@ -25,12 +24,12 @@ window is built (see ioi_control_panel.py):
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QWidget
+from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QTabBar, QWidget
 
 
 class NoScrollWheelFilter(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if event.type() == QEvent.Type.Wheel and isinstance(watched, (QAbstractSpinBox, QComboBox)):
+        if event.type() == QEvent.Type.Wheel and isinstance(watched, (QAbstractSpinBox, QComboBox, QTabBar)):
             parent = watched.parentWidget()
             if parent is not None:
                 QApplication.sendEvent(parent, event)
