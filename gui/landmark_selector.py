@@ -608,9 +608,6 @@ class LandmarkSelectorWidget(QWidget):
             pts["midline"] = mid
         elif t == "ref":
             self._place("ref", x, y)
-        # auto-advance within the midline pair; otherwise stay on the same target
-        if t == "mid0":
-            self._target_group.button(3).setChecked(True)
         self._mark_dirty()
 
     def _place(self, key: str, x: int, y: int) -> None:
