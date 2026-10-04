@@ -161,6 +161,7 @@ _WARMUP_MARKER_SLACK_S = 5.0
 _POST_IDLE_TIMEOUT_S = 2.0
 _FIRMWARE_BASELINE_FRAMES = 45
 _FIRMWARE_POST_FRAMES = 60
+_FIRMWARE_GREEN_FRAMES = 50
 
 # ── Log line patterns ──────────────────────────────────────────────────────────
 _RE_DAILY               = re.compile(r"Daily output folder:\s*(.+)")
@@ -1107,7 +1108,7 @@ class RunSessionWidget(QWidget):
         w, f = self._make_form()
 
         self._green_frames = QSpinBox()
-        self._green_frames.setRange(1, 500)
+        self._green_frames.setRange(1, _FIRMWARE_GREEN_FRAMES)
         self._green_frames.setValue(30)
         self._green_frames.setSuffix("  frames")
         f.addRow("Green reference frames:", self._green_frames)
@@ -1119,13 +1120,13 @@ class RunSessionWidget(QWidget):
         f.addRow("Green ref trim:", self._green_ref_trim)
 
         self._baseline_frames = QSpinBox()
-        self._baseline_frames.setRange(1, 500)
+        self._baseline_frames.setRange(1, _FIRMWARE_BASELINE_FRAMES)
         self._baseline_frames.setValue(40)
         self._baseline_frames.setSuffix("  frames")
         f.addRow("Baseline frames:", self._baseline_frames)
 
         self._post_frames = QSpinBox()
-        self._post_frames.setRange(1, 500)
+        self._post_frames.setRange(1, _FIRMWARE_POST_FRAMES)
         self._post_frames.setValue(40)
         self._post_frames.setSuffix("  frames")
         f.addRow("Post-stim frames:", self._post_frames)
