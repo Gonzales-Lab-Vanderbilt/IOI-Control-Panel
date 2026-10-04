@@ -2562,20 +2562,29 @@ class BlackflyCapture:
         green_count = 0
         green_end_seen = False
 
+        last_activity = time.time()
         while True:
             for marker in self._poll_all_markers(session_markers_seen, trial_index=0):
                 if marker == "SESSION_GREEN_REFERENCE_END":
                     green_end_seen = True
+                last_activity = time.time()
 
             image = None
             try:
                 image = self.cam.GetNextImage(100)
+                if image is not None:
+                    last_activity = time.time()
             except PySpin.SpinnakerException:
                 image = None
 
             if image is None:
-                if green_count >= self.cfg.green_frames and green_end_seen:
+                if green_end_seen:
                     break
+                if time.time() - last_activity > self.cfg.marker_timeout_s:
+                    raise TimeoutError(
+                        f"Timeout waiting for green reference frames or SESSION_GREEN_REFERENCE_END marker. "
+                        f"Last activity was {time.time() - last_activity:.1f} s ago."
+                    )
                 continue
 
             try:
@@ -2616,6 +2625,15 @@ class BlackflyCapture:
         if self._csv_fp is not None:
             self._csv_fp.flush()
 
+        if green_count == 0:
+            raise RuntimeError(
+                f"Session green reference failed: no frames saved to {session_green_dir}.\n"
+                "Check the cabling between the Arduino and the camera."
+            )
+        elif green_count < self.cfg.green_frames:
+            print(
+                f"Warning: {green_count} of {self.cfg.green_frames} green reference frames saved."
+            )
         print(f"Session green reference complete: {green_count} frames saved to {session_green_dir}")
 
         if self.cfg.green_exposure_us is not None:
