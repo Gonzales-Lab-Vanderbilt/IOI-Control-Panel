@@ -214,9 +214,19 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override name)
         """Analysis jobs can now be queued and run in the background, so a
-        quit while some are still queued/running can silently drop work
-        (queued jobs never start; running ones get no graceful-stop window).
-        Warn and let the user cancel."""
+        quit while some are still queued/running can silently drop work. The
+        same goes for running sessions; this warns the user before quitting."""
+        if self.session_runner.is_running:
+            QMessageBox.warning(
+                self,
+                "Warning: Session still running",
+                "There is a session that is still currently running.\n\n"
+                "Please wait for the session to conclude or press 'Stop Session'" \
+                "to end it manually.",
+                QMessageBox.StandardButton.Ok
+            )
+            event.ignore()
+            return
         if self._statistics_widget.has_active_jobs():
             n = self._statistics_widget.active_job_count()
             reply = QMessageBox.question(
