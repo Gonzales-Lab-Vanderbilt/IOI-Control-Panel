@@ -62,7 +62,7 @@ SPISettings mcp41010SpiSettings(4000000, MSBFIRST, SPI_MODE0);
 // Arduino sends a few extra post triggers as a cushion, while Python only saves
 // the requested number of post frames.
 const int sessionGreenFrames = 50;
-const int redBaselineFrames  = 45;
+const int redBaselineFrames  = 40;
 const int postFrames         = 60;   // camera trigger count, includes buffer/insurance frames
 
 // Number of post-block trigger periods the stimulus stays active for.
