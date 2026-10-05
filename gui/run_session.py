@@ -134,7 +134,7 @@ _FIRMWARE_STIM_WINDOW_S = 5.0
 #   --baseline-frames / --post-frames (default 40/40) are Python save-and-exit
 #   targets *below* those firmware counts and the trial loop only exits on the
 #   firmware TRIAL_END marker, so lowering them does not shorten a trial.
-_HW_TRIAL_S = 12.3
+_HW_TRIAL_S = 11.8
 # intrinsic_imaging.py TrialConfig.trailing_timeout_s; the post-trial drain
 # loop has no early break, so it is always paid in full.
 _TRAILING_DRAIN_S = 2.0
@@ -159,7 +159,7 @@ _WARMUP_MARKER_SLACK_S = 5.0
 # Frames-tab override pushes --baseline-frames above 45 or --post-frames
 # above 60 (defaults 40/40 stay below the firmware counts).
 _POST_IDLE_TIMEOUT_S = 2.0
-_FIRMWARE_BASELINE_FRAMES = 45
+_FIRMWARE_BASELINE_FRAMES = 40
 _FIRMWARE_POST_FRAMES = 60
 _FIRMWARE_GREEN_FRAMES = 50
 
