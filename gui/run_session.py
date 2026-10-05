@@ -129,12 +129,12 @@ _FIRMWARE_STIM_WINDOW_S = 5.0
 #   TrialConfig.trigger_period_ms = 100.0 ("Must match the Arduino's
 #   triggerPeriodMs"); the GUI never overrides it, so the cadence is always
 #   1000/100 = 10 triggers/s. intrinsic_arduino.ino runRedOnlyTrial() /
-#   runLraTrial() fire a compile-time-fixed 45 baseline + 4 guard + 10 stim
-#   lead-in + 60 post + 4 trailing = 123 triggers -> 12.3 s. The GUI's
+#   runLraTrial() fire a compile-time-fixed 40 baseline + 4 guard + 10 stim
+#   lead-in + 90 post + 4 trailing = 148 triggers -> 14.8 s. The GUI's
 #   --baseline-frames / --post-frames (default 40/40) are Python save-and-exit
 #   targets *below* those firmware counts and the trial loop only exits on the
 #   firmware TRIAL_END marker, so lowering them does not shorten a trial.
-_HW_TRIAL_S = 11.8
+_HW_TRIAL_S = 14.8
 # intrinsic_imaging.py TrialConfig.trailing_timeout_s; the post-trial drain
 # loop has no early break, so it is always paid in full.
 _TRAILING_DRAIN_S = 2.0
@@ -157,10 +157,10 @@ _SESSION_SETUP_S = 12.0
 _WARMUP_MARKER_SLACK_S = 5.0
 # intrinsic_imaging.py post_idle_timeout_s: paid per trial only when a
 # Frames-tab override pushes --baseline-frames above 45 or --post-frames
-# above 60 (defaults 40/40 stay below the firmware counts).
+# above 90 (defaults 40/40 stay below the firmware counts).
 _POST_IDLE_TIMEOUT_S = 2.0
 _FIRMWARE_BASELINE_FRAMES = 40
-_FIRMWARE_POST_FRAMES = 60
+_FIRMWARE_POST_FRAMES = 90
 _FIRMWARE_GREEN_FRAMES = 50
 
 # ── Log line patterns ──────────────────────────────────────────────────────────
@@ -1127,7 +1127,7 @@ class RunSessionWidget(QWidget):
 
         self._post_frames = QSpinBox()
         self._post_frames.setRange(1, _FIRMWARE_POST_FRAMES)
-        self._post_frames.setValue(40)
+        self._post_frames.setValue(90)
         self._post_frames.setSuffix("  frames")
         f.addRow("Post-stim frames:", self._post_frames)
 
@@ -2164,7 +2164,7 @@ class RunSessionWidget(QWidget):
         if "baseline_frames" in d:
             self._baseline_frames.setValue(_int("baseline_frames", 40))
         if "post_frames" in d:
-            self._post_frames.setValue(_int("post_frames", 40))
+            self._post_frames.setValue(_int("post_frames", 90))
         if "save_gap_frames" in d:
             self._save_gap_frames.setChecked(_bool("save_gap_frames", True))
         # binning

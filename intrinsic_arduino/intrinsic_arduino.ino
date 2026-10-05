@@ -63,7 +63,7 @@ SPISettings mcp41010SpiSettings(4000000, MSBFIRST, SPI_MODE0);
 // the requested number of post frames.
 const int sessionGreenFrames = 50;
 const int redBaselineFrames  = 40;
-const int postFrames         = 60;   // camera trigger count, includes buffer/insurance frames
+const int postFrames         = 90;   // camera trigger count, includes buffer/insurance frames
 
 // Number of post-block trigger periods the stimulus stays active for.
 // Python only saves the first 40 post frames -- the remaining postFrames-40

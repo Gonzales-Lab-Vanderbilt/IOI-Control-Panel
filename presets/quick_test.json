@@ -11,5 +11,5 @@
   "camera_binning": 1,
   "green_frames": 30,
   "baseline_frames": 40,
-  "post_frames": 40
+  "post_frames": 90
 }
