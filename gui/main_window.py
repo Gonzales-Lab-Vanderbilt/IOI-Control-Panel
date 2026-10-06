@@ -221,7 +221,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Warning: Session still running",
                 "There is a session that is still currently running.\n\n"
-                "Please wait for the session to conclude or press 'Stop Session'" \
+                "Please wait for the session to conclude or press 'Stop Session' " \
                 "to end it manually.",
                 QMessageBox.StandardButton.Ok
             )
