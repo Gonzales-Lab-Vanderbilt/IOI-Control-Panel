@@ -201,7 +201,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--green-frames", type=int, default=30)
     parser.add_argument("--green-reference-trim-frames", type=int, default=5)
     parser.add_argument("--baseline-frames", type=int, default=40)
-    parser.add_argument("--post-frames", type=int, default=40)
+    parser.add_argument("--post-frames", type=int, default=90)
     parser.add_argument("--trailing-timeout-s", type=float, default=2.0)
     parser.add_argument("--post-idle-timeout-s", type=float, default=2.0)
     parser.add_argument("--overwrite", action="store_true")

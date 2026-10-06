@@ -1,6 +1,6 @@
 {
-  "_name": "Standard – V1 localization (40 trials, analyze)",
-  "_description": "40-trial session with raw pixel-count analysis. Typical for V1 retinotopic mapping.",
+  "_name": "V1 Localization",
+  "_description": "Typical for V1 retinotopic mapping.",
   "trials": 40,
   "iti": 20.0,
   "red_stabilization_s": 600.0,
@@ -12,7 +12,7 @@
   "green_frames": 30,
   "green_reference_trim_frames": 5,
   "baseline_frames": 40,
-  "post_frames": 40,
+  "post_frames": 90,
   "analysis_start_frame": 5,
   "analysis_end_frame": 35,
   "analysis_smoothing_sigma": 5.0,

@@ -93,6 +93,15 @@ def parse_ts(s: str) -> float:
     return datetime.fromisoformat(s).timestamp()
 
 
+def _bridge_gaps(ax, x, y, color, lw=1.0):
+    """Dotted connector across interior no-data runs of y."""
+    fin = np.where(np.isfinite(y))[0]
+    for a, b in zip(fin[:-1], fin[1:]):
+        if b - a > 1:
+            ax.plot([x[a], x[b]], [y[a], y[b]], color=color, lw=lw,
+                    ls=":", alpha=0.7, zorder=2)
+
+
 def load_raw(path: Path) -> np.ndarray:
     data = np.fromfile(path, dtype=np.uint16)
     assert data.size == WIDTH * HEIGHT, f"bad size {data.size} for {path}"
@@ -545,7 +554,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
     loo_results = {}
     raw_curves = {}
     gap_curves = {}
-    common_grid = np.linspace(-6, 8, 280)
+    common_grid = -6 + np.arange(360) * (14 / 279)
     interp_curves = []
 
     cache_npz = out_dir / "roi_timecourse_raw.npz"
@@ -788,6 +797,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
                     color="0.55", alpha=0.45, label="+/- SEM")
     ax.plot(common_grid, mean_curve, color="k", lw=1.6,
             label=f"mean (LOO ROI, n={len(interp_curves)} trials)")
+    _bridge_gaps(ax, common_grid, mean_curve, color="k", lw=1.6)
     ax.axhline(0, color="0.6", lw=0.8)
     ax.axvline(0, color="crimson", lw=1.1, ls="--", label="stimulus onset")
     ax.set_xlabel("Time relative to STIM_START (s)")
@@ -826,6 +836,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
         if i >= len(interp_curves):
             break
         ax.plot(common_grid, interp_curves[i], color=cmap(i / denom), lw=1.1, label=f"trial {t}")
+        _bridge_gaps(ax, common_grid, interp_curves[i], color="k", lw=1.1)
     ax.set_xlabel("Time relative to STIM_START (s)")
     ax.set_ylabel("ROI dR/R (%)")
     ax.set_title(f"{session_dir.name}: per-trial LOO ROI dR/R(t) (dark->light = trial order)")
