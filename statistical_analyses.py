@@ -105,8 +105,8 @@ def _phase_offsets(log_dir, t_min=None):
             if fname.startswith("baseline_"):
                 if trial not in last_base or fname >= last_base[trial][0]:
                     last_base[trial] = (fname, int(cam))
-                elif fname.startswith("post_00001"):
-                    first_post[trial] = int(cam)
+            elif fname.startswith("post_00001"):
+                first_post[trial] = int(cam)
     back = [(last_base[k][1] - first_post[k]) / 1e9 for k in last_base if k in first_post]
     if back:
         bl_s = pf_s + float(np.median(back))

@@ -855,7 +855,7 @@ def render_timecourse(
     # gap-frame coverage; the box only newly disappears when coverage is
     # complete for every series drawn).
     gap_mask = (grid > axes["b_last"]) & (grid < axes["p_first"])
-    gap_missing = gap_mask & np.any([np.isnam(m) for m, *_ in series], axis=0)
+    gap_missing = gap_mask & np.any([np.isnan(m) for m, *_ in series], axis=0)
     gap_visible = bool(gap_missing.any())
     if gap_visible:
         g_lo, g_hi = float(grid[gap_missing].min()), float(grid[gap_missing].max())
