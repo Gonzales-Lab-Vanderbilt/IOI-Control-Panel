@@ -610,6 +610,15 @@ def session_axes(session_dir: Path, summary: dict) -> dict:
                 t_axis=t_axis, w0=float(t_axis[nb + f0]), w1=float(t_axis[nb + f1 - 1]))
 
 
+def _bridge_gaps(ax, x, y, color, lw=1.0):
+    """Dotted connector across interior no-data runs of y."""
+    fin = np.where(np.isfinite(y))[0]
+    for a, b in zip(fin[:-1], fin[1:]):
+        if b - a > 1:
+            ax.plot([x[a], x[b]], [y[a], y[b]], color=color, lw=lw,
+                    ls=":", alpha=0.7, zorder=2)
+
+
 def extract_mask_timecourse(session_dir: Path, trial_ids: list, mask: np.ndarray) -> dict:
     """Per-trial (baseline+post) and gap dR/R(%) timecourses for `mask`
     applied to session_dir's raw frames, plus the per-trial amplitude
@@ -834,6 +843,7 @@ def render_timecourse(
     for m, s, c, lbl, lw, _ in series:
         ax.fill_between(grid, m - s, m + s, color=c, alpha=0.26, lw=0)
         ax.plot(grid, m, color=c, lw=lw, label=lbl)
+        _bridge_gaps(ax, grid, m, color=c, lw=lw)
     ax.axhline(0, color="0.6", lw=0.8)
     ax.axvline(0, color="crimson", lw=1.1, ls="--", label="Stimulus onset")
     halo = [pe.Stroke(linewidth=4.4, foreground="white"), pe.Normal()]
