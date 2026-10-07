@@ -732,11 +732,11 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
             t_axis_plot = np.concatenate([t_axis[:n_base], gap_t[gorder], t_axis[n_base:]])
             v_plot = np.concatenate([v[:n_base], gap_v[gorder], v[n_base:]])
             ip = np.interp(common_grid, t_axis_plot, v_plot, left=np.nan, right=np.nan)
+            if gap_t.min() - base_last_s > gap_fill_tol_s:
+                ip[(common_grid > base_last_s) & (common_grid < gap_t.min())] = np.nan
             n_gap_filled += 1
         else:
             ip = np.interp(common_grid, t_axis, v, left=np.nan, right=np.nan)
-            if gap_t.min() - base_last_s > gap_fill_tol_s:
-                ip[(common_grid > base_last_s) & (common_grid < gap_t.min())] = np.nan
             ip[(common_grid > base_last_s) & (common_grid < post_first_s)] = np.nan
         interp_curves.append(ip)
         _kept.append(t)
