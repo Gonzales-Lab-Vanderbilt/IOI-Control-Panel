@@ -61,6 +61,7 @@ class PosterFormSnapshot:
     suppress_title: bool
     show_amplitude_labels: bool
     make_timelapse: bool = False  # chain session_timelapse.py after the figures
+    negative_only: bool = False
 
 
 def resolve_out_dir(snap: StatsFormSnapshot) -> Path | None:
@@ -183,6 +184,9 @@ def build_poster_argv(
     if poster.show_amplitude_labels:
         args.append("--show-amplitude-labels")
 
+    if poster.negative_only:
+        args.append("--negative-only")
+
     return args
 
 
@@ -221,4 +225,7 @@ def build_timelapse_argv(
 
     if poster.reuse_extraction_cache:
         args.append("--reuse-cache")
+
+    if poster.negative_only:
+        args.append("--negative-only")
     return args

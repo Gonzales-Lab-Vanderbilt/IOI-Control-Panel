@@ -74,7 +74,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
-from matplotlib.colors import Normalize
+from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.patches import Circle, FancyBboxPatch, Patch, Rectangle
 
 import ioi_landmarks
@@ -433,11 +433,21 @@ def auto_vmax(demeaned_map: np.ndarray) -> float:
     return NICE_VMAX[-1]
 
 
+def drr_scale(vmax: float, negative_only: bool):
+    """(norm, cmap, ticks) for a dR/R color bar. negative_only keeps
+    the red half of RdBu, so the bar matches the panel colors exactly"""
+    if negative_only:
+        cmap = ListedColormap(plt.get_cmap("RdBu")(np.linspace(0.0, 0.5, 128)))
+        return Normalize(-vmax, 0), cmap, np.linspace (-vmax, 0, 3)
+    return Normalize(-vmax, vmax), plt.get_cmap("RdBu"), np.linspace(-vmax, vmax, 5)
+
+
 def render_panel(
     dmap_full: np.ndarray, roi_full: np.ndarray, cluster_full: np.ndarray,
     green_full: np.ndarray, region_fullres: tuple, out_path: Path, *,
     vmax: float | None, outlines: bool, out_region_mask: np.ndarray | None,
     um_per_px: float | None, orient: dict, colorbar: bool = True,
+    negative_only: bool = False
 ) -> float:
     """One annotated cortical panel. Returns the vmax actually used.
     um_per_px=None draws no scale bar (spatial calibration unknown).
@@ -454,7 +464,7 @@ def render_panel(
     iw, ih = Ww / 100.0, Hh / 100.0
     fw = iw + (CB_STRIP if colorbar else 0.0)
     if vmax is None:
-        vmax = auto_vmax(dmap)
+        vmax = auto_vmax(np.minimum(dmap, 0) if negative_only else dmap)
 
     norm = Normalize(-vmax, vmax)
     rgba = plt.get_cmap("RdBu")(norm(np.nan_to_num(dmap)))
@@ -462,6 +472,8 @@ def render_panel(
     alpha[np.isnan(dmap)] = 0.0
     alpha[alpha < 0.18] = 0.0
     rgba[..., 3] = np.clip(alpha, 0, 0.88)
+    if negative_only:
+        rgba[..., 3][np.nan_to_num(dmap) >= 0] = 0.0
 
     fig = plt.figure(figsize=(fw, ih))
     ax = fig.add_axes([0, 0, iw / fw, 1])
@@ -548,15 +560,16 @@ def render_panel(
 
     if colorbar:
         cax = fig.add_axes([(iw + 0.30) / fw, 0.055, 0.46 / fw, 0.89])
-        cb = fig.colorbar(plt.cm.ScalarMappable(norm, cmap="RdBu"), cax=cax)
-        cb.set_ticks(np.linspace(-vmax, vmax, 5))
+        cb_norm, cb_cmap, ticks = drr_scale(vmax, negative_only)
+        cb = fig.colorbar(plt.cm.ScalarMappable(cb_norm, cmap = cb_cmap), cax = cax)
+        cb.set_ticks(ticks)
         dp = 4 if vmax < 0.02 else 3
-        cb.ax.set_yticklabels([(f"{0:.{dp}f}" if abs(t) < 1e-12 else f"{t:+.{dp}f}")
-                               for t in np.linspace(-vmax, vmax, 5)])
+        cb.ax.set_yticklabels([(f"{0:.{dp}f}" if abs(t) < 1e-12 else f"{t:+.{dp}f}") for t in ticks])
         cb.ax.tick_params(labelsize=FS_TICK, length=6, width=1.4)
         cb.outline.set_linewidth(1.2)
-        cb.set_label("trial-mean $\\Delta$R/R (%)\nnegative = activation",
-                      fontsize=FS_CBLAB, labelpad=12, linespacing=1.45)
+        cb.set_label("trial-mean $\\Delta$R/R (%)\n"
+                     + ("decreases only" if negative_only else "negative = activation"),
+                     fontsize=FS_CBLAB, labelpad=12, linespacing=1.45)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150, transparent=True, pad_inches=0)
@@ -944,6 +957,8 @@ def main(argv: list) -> int:
     ap.add_argument("--show-amplitude-labels", action="store_true",
                      help="Draw each series' numerical dR/R value (e.g. '-0.068%%') next to its "
                           "mean-over-amplitude-window line on <label>_timecourse.png.")
+    ap.add_argument("--negative-only", action="store_true",
+                    help="Color only dR/R decreases; increases are left uncolored.")
     args = ap.parse_args(argv)
 
     session_dir = Path(args.session_dir)
@@ -1033,25 +1048,26 @@ def main(argv: list) -> int:
         except ioi_landmarks.LandmarkError as exc:
             print(f"Stereotaxic coordinates not written: {exc}")
     print("Rendering cortical panels..." + (" (no scale bar)" if scale_um_per_px is None else ""))
+    sfx = "_neg" if args.negative_only else ""
     v1 = render_panel(dmap_full, roi_core_full, masks["cluster"], _green_display(session_dir),
-                       masks["region"], out_dir / f"{label}_drr_panel.png",
+                       masks["region"], out_dir / f"{label}_drr_panel{sfx}.png",
                        vmax=None, outlines=True, out_region_mask=masks["out"],
-                       um_per_px=scale_um_per_px, orient=orient)
-    print(f"  {label}_drr_panel.png  scale +/-{v1:.4g}%")
+                       um_per_px=scale_um_per_px, orient=orient, negative_only=args.negative_only)
+    print(f"  {label}_drr_panel{sfx}.png  scale +/-{v1:.4g}%")
     v2 = render_panel(dmap_full, roi_core_full, masks["cluster"], _green_display(session_dir),
-                       masks["region"], out_dir / f"{label}_heat.png",
+                       masks["region"], out_dir / f"{label}_heat{sfx}.png",
                        vmax=None, outlines=False, out_region_mask=None,
-                       um_per_px=scale_um_per_px, orient=orient)
-    print(f"  {label}_heat.png  scale +/-{v2:.4g}%")
+                       um_per_px=scale_um_per_px, orient=orient, negative_only=args.negative_only)
+    print(f"  {label}_heat{sfx}.png  scale +/-{v2:.4g}%")
     render_panel(dmap_full, roi_core_full, masks["cluster"], _green_display(session_dir),
-                 masks["region"], out_dir / f"{label}_drr_panel_v05.png",
+                 masks["region"], out_dir / f"{label}_drr_panel_v05{sfx}.png",
                  vmax=args.fixed_vmax, outlines=True, out_region_mask=masks["out"],
-                 um_per_px=scale_um_per_px, orient=orient)
+                 um_per_px=scale_um_per_px, orient=orient, negative_only=args.negative_only)
     render_panel(dmap_full, roi_core_full, masks["cluster"], _green_display(session_dir),
-                 masks["region"], out_dir / f"{label}_heat_v05.png",
+                 masks["region"], out_dir / f"{label}_heat_v05{sfx}.png",
                  vmax=args.fixed_vmax, outlines=False, out_region_mask=None,
-                 um_per_px=scale_um_per_px, orient=orient)
-    print(f"  {label}_drr_panel_v05.png / {label}_heat_v05.png  scale +/-{args.fixed_vmax:g}%")
+                 um_per_px=scale_um_per_px, orient=orient, negative_only=args.negative_only)
+    print(f"  {label}_drr_panel_v05{sfx}.png / {label}_heat_v05{sfx}.png  scale +/-{args.fixed_vmax:g}%")
 
     cache_path = out_dir / f"{label}_extraction_cache.npz"
     out_extraction = None

@@ -319,13 +319,15 @@ def green_display(session_dir: Path, region: tuple, b: int) -> np.ndarray:
     return np.clip((gb - lo) / (hi - lo + 1e-9), 0, 1) ** 0.85
 
 
-def overlay_rgba(img: np.ndarray, vmax: float) -> np.ndarray:
+def overlay_rgba(img: np.ndarray, vmax: float, negative_only=False) -> np.ndarray:
     norm = Normalize(-vmax, vmax)
     rgba = plt.get_cmap("RdBu")(norm(np.nan_to_num(img)))
     alpha = np.clip(np.abs(np.nan_to_num(img)) / vmax, 0, 1) ** 0.7
     alpha[~np.isfinite(img)] = 0.0
     alpha[alpha < 0.18] = 0.0
     rgba[..., 3] = np.clip(alpha, 0, 0.88)
+    if negative_only:
+        rgba[..., 3][np.nan_to_num(img) >= 0] = 0.0
     return rgba
 
 
@@ -490,6 +492,8 @@ def main(argv: list) -> int:
                     help="Comma-separated times (s) for the filmstrip panels.")
     ap.add_argument("--reuse-cache", action="store_true", help="Reuse the averaged stack if already cached.")
     ap.add_argument("--compute-only", action="store_true", help="Build the cache(s) and stop.")
+    ap.add_argument("--negative-only", action="store_true",
+                    help="Color only dR/R decreases; increases are left uncolored.")
     args = ap.parse_args(argv)
 
     session_dir = Path(args.session_dir)
@@ -565,7 +569,8 @@ def main(argv: list) -> int:
     win_map = np.nanmean(disp[in_win], axis=0) if in_win.any() else np.nanmean(disp, axis=0)
     # auto: the session figures' own rule (0.5/99.5 percentile, rounded up the same
     # NICE ladder, in % dR/R) applied to the amplitude-window average
-    vmax = args.fixed_vmax or spf.auto_vmax(win_map[np.isfinite(win_map)])
+    vsrc = np.minimum(win_map, 0) if args.negative_only else win_map
+    vmax = args.fixed_vmax or spf.auto_vmax(vsrc[np.isfinite(vsrc)])
     print(f"Colour scale: +/-{vmax:g} % dR/R, fixed for every frame ({'given' if args.fixed_vmax else 'auto from the amplitude window'}).")
 
     present = np.array([np.isfinite(disp[k]).any() for k in range(len(times))])
@@ -584,7 +589,9 @@ def main(argv: list) -> int:
     note = (f"Trial-averaged ΔR/R, {b}×{b} binned, σ = {PIPELINE_SIGMA * PIPELINE_BINNING / b:.1f} px, "
             f"{args.smooth_frames * dt:.1f} s moving average"
             + ("" if args.no_demean else ", field median removed per frame")
-            + f".  Fixed scale ±{vmax:g} %.  Hatched: frames not saved.")
+            + (f".  Fixed scale −{vmax:g} to 0 %, decreases only." if args.negative_only
+               else f".  Fixed scale ±{vmax:g} %.")
+            + "  Hatched: frames not saved.")
 
     params = dict(
         session=session_dir.name, stats_dir=str(stats_dir), compare_stats_dir=args.compare_stats_dir,
@@ -618,9 +625,11 @@ def main(argv: list) -> int:
         draw_landmarks(axi, lm, region, b, 11, um)
         axes_img.append(axi); overlays.append(ov)
     cax = fig.add_axes([0.885, img_top + 0.05, cbw, img_h - 0.10])
-    cb = fig.colorbar(plt.cm.ScalarMappable(Normalize(-vmax, vmax), cmap="RdBu"), cax=cax)
-    cb.set_ticks(np.linspace(-vmax, vmax, 5))
-    cb.set_label("ΔR/R (%)\nnegative = activation", fontsize=11)
+    cb_norm, cb_cmap, ticks = spf.drr_scale(vmax, args.negative_only)
+    cb = fig.colorbar(plt.cm.ScalarMappable(cb_norm, cmap=cb_cmap), cax=cax)
+    cb.set_ticks(ticks)
+    cb.set_label("ΔR/R (%)\n" + ("decreases only" if args.negative_only else "negative = activation"),
+                 fontsize=11)
     tlabel = fig.text(0.04, 0.955, "", fontsize=22, fontweight="bold", va="center")
     badge = fig.text(0.24, 0.955, "", fontsize=13, fontweight="bold", color="white", va="center",
                      bbox=dict(boxstyle="round,pad=0.35", facecolor="#B03A2E", edgecolor="none"))
@@ -640,7 +649,7 @@ def main(argv: list) -> int:
         badge.set_visible(on)
         frames = [disp[k]] + ([disp_c[k]] if disp_c is not None else [])
         for ov, fr in zip(overlays, frames):
-            ov.set_data(overlay_rgba(fr, vmax) if np.isfinite(fr).any() else np.zeros(shape + (4,)))
+            ov.set_data(overlay_rgba(fr, vmax, args.negative_only) if np.isfinite(fr).any() else np.zeros(shape + (4,)))
         missing = not np.isfinite(disp[k]).any()
         gapnote.set_text("frames not saved at this time" if missing else "")
         gapnote.set_visible(missing)
@@ -658,7 +667,8 @@ def main(argv: list) -> int:
         fmt = "mp4" if ffmpeg else "gif"
     if fmt == "mp4" and not ffmpeg:
         raise SystemExit("MP4 needs ffmpeg (on PATH, or `py -3.10 -m pip install imageio-ffmpeg`). Use --format gif.")
-    movie = out_dir / f"{label}_timelapse.{fmt}"
+    sfx = "_neg" if args.negative_only else ""
+    movie = out_dir / f"{label}_timelapse{sfx}.{fmt}"
     print(f"Timelapse: rendering {len(times)} frames -> {movie.name}")
     if fmt == "mp4":
         matplotlib.rcParams["animation.ffmpeg_path"] = ffmpeg
@@ -704,7 +714,7 @@ def main(argv: list) -> int:
             sel = np.abs(times - t) <= dt * 1.01
             fr = np.nanmean(stack[sel], axis=0) if sel.any() and np.isfinite(stack[sel]).any() else None
             if fr is not None:
-                axi.imshow(overlay_rgba(fr, vmax), interpolation="bilinear")
+                axi.imshow(overlay_rgba(fr, vmax, args.negative_only), interpolation="bilinear")
             else:
                 axi.text(shape[1] / 2, shape[0] / 2, "not saved", ha="center", va="center", color="white",
                          fontsize=9, bbox=dict(boxstyle="round", facecolor="black", alpha=0.6))
@@ -722,20 +732,22 @@ def main(argv: list) -> int:
             draw_landmarks(axi, lm, region, b, 6, um)
     y_last = top_ - nrow * tile_h - (nrow - 1) * row_gap
     cax = fig.add_axes([right + 0.012, y_last + 0.1 * tile_h, 0.012, nrow * tile_h - 0.2 * tile_h])
-    cb = fig.colorbar(plt.cm.ScalarMappable(Normalize(-vmax, vmax), cmap="RdBu"), cax=cax)
-    cb.set_ticks([-vmax, 0, vmax]); cb.ax.tick_params(labelsize=7)
+    cb_norm, cb_cmap, ticks = spf.drr_scale(vmax, args.negative_only)
+    cb = fig.colorbar(plt.cm.ScalarMappable(cb_norm, cmap=cb_cmap), cax=cax)
+    cb.set_ticks(ticks)
+    cb.ax.tick_params(labelsize=7)
     cb.set_label("ΔR/R (%)", fontsize=8)
     axt = fig.add_axes([left + 0.03, BOTTOM / fig_h, right - left - 0.03, TRACE / fig_h])
     plot_traces(axt, series, stim_dur, spans, xlim, 9)
     for t in ft:
         axt.axvline(t, color="black", lw=0.7, ls=":", zorder=4)
     fig.text(0.5, 0.004, note, ha="center", va="bottom", fontsize=6.5, color="0.35")
-    strip = out_dir / f"{label}_timelapse_filmstrip.png"
+    strip = out_dir / f"{label}_timelapse_filmstrip{sfx}.png"
     fig.savefig(strip, dpi=200, facecolor="white")
     plt.close(fig)
 
     params["outputs"] = [movie.name, strip.name]
-    (out_dir / f"{label}_timelapse.json").write_text(json.dumps(params, indent=2), encoding="utf-8")
+    (out_dir / f"{label}_timelapse{sfx}.json").write_text(json.dumps(params, indent=2), encoding="utf-8")
     print(f"Done -> {out_dir}")
     return 0
 
