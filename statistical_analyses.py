@@ -86,8 +86,31 @@ def _phase_offsets(log_dir, t_min=None):
         if need <= set(m):
             bl.append((m["BASELINE_LAST_FRAME_TRIGGER"] - m["STIM_START"]) / 1000.0)
             pf.append((m["POST_FIRST_FRAME_TRIGGER"] - m["STIM_START"]) / 1000.0)
-    return float(np.median(bl)), float(np.median(pf))
+    bl_s, pf_s = float(np.median(bl)), float(np.median(pf))
 
+    # reanchoring the baseline
+    # the marker fires on the last baseline trigger, but the old firmware sent 45
+    # and the new firmware sends 40. take the last SAVED frame's time from camera clock
+
+    last_base, first_post = {}, {}
+    with open(Path(log_dir) / "session_log.csv", newline = "", encoding = "utf-8") as fp:
+        for r in csv.DictReader(fp):
+            if t_min and r["host_timestamp_iso"] < t_min:
+                continue
+            fname = (r.get("filename") or "").strip()
+            cam = (r.get("camera_timestamp") or "").strip()
+            if not fname or not cam:
+                continue
+            trial = r["trial_index"]
+            if fname.startswith("baseline_"):
+                if trial not in last_base or fname >= last_base[trial][0]:
+                    last_base[trial] = (fname, int(cam))
+            elif fname.startswith("post_00001"):
+                first_post[trial] = int(cam)
+    back = [(last_base[k][1] - first_post[k]) / 1e9 for k in last_base if k in first_post]
+    if back:
+        bl_s = pf_s + float(np.median(back))
+    return bl_s, pf_s
 
 def parse_ts(s: str) -> float:
     return datetime.fromisoformat(s).timestamp()
@@ -265,7 +288,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
         frames_by_trial[t]["post"] = sorted(p2, key=lambda x: x[0])
         frames_by_trial[t]["gap"] = sorted(g2, key=lambda x: x[0])
 
-    # drop trials that don't have exactly the expected 40/40 frames logged
+    # drop trials that don't have exactly the expected frames logged
     for t in list(frames_by_trial.keys()):
         nb = len(frames_by_trial[t]["baseline"])
         npst = len(frames_by_trial[t]["post"])
@@ -613,7 +636,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
             raw_curves[held_out] = (t_arr.copy(), v_arr.copy())
             gap_curves[held_out] = (gap_t_arr.copy(), gap_v_arr.copy())
 
-            post_mask = (t_arr >= 0) & (t_arr <= 8)
+            post_mask = (t_arr >= 0) & (t_arr <= 12)
             t_post, v_post = t_arr[post_mask], v_arr[post_mask]
             if len(v_post) == 0:
                 continue
@@ -677,7 +700,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
     def _gap_fills_span(gap_t: np.ndarray) -> bool:
         if len(gap_t) == 0:
             return False
-        boundary = np.concatenate([[base_last_s], np.sort(gap_t), [post_first_s]])
+        boundary = np.concatenate([np.sort(gap_t), [post_first_s]])
         diffs = np.diff(boundary)
         return bool(np.all(diffs >= -1e-9) and np.all(diffs <= gap_fill_tol_s))
 
@@ -709,6 +732,8 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
             t_axis_plot = np.concatenate([t_axis[:n_base], gap_t[gorder], t_axis[n_base:]])
             v_plot = np.concatenate([v[:n_base], gap_v[gorder], v[n_base:]])
             ip = np.interp(common_grid, t_axis_plot, v_plot, left=np.nan, right=np.nan)
+            if gap_t.min() - base_last_s > gap_fill_tol_s:
+                ip[(common_grid > base_last_s) & (common_grid < gap_t.min())] = np.nan
             n_gap_filled += 1
         else:
             ip = np.interp(common_grid, t_axis, v, left=np.nan, right=np.nan)
@@ -797,7 +822,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
                     color="0.55", alpha=0.45, label="+/- SEM")
     ax.plot(common_grid, mean_curve, color="k", lw=1.6,
             label=f"mean (LOO ROI, n={len(interp_curves)} trials)")
-    _bridge_gaps(ax, common_grid, mean_curve, color="k", lw=1.6)
+    _bridge_gaps(ax, common_grid, mean_curve, color="k", lw=1.0)
     ax.axhline(0, color="0.6", lw=0.8)
     ax.axvline(0, color="crimson", lw=1.1, ls="--", label="stimulus onset")
     ax.set_xlabel("Time relative to STIM_START (s)")
@@ -814,7 +839,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
         _label_lo, _label_hi = max(mean_gap_runs, key=lambda r: r[1] - r[0])
         if (_label_hi - _label_lo) >= 0.3:
             ax.text((_label_lo + _label_hi) / 2, _y1 - 0.26 * (_y1 - _y0),
-                    "no data\n(camera paused)", ha="center", va="top", fontsize=7,
+                    "no data\nsaved", ha="center", va="top", fontsize=7,
                     color="0.30", linespacing=1.35,
                     bbox=dict(boxstyle="round,pad=0.28", fc="white", ec="0.75", lw=0.6, alpha=0.9))
     ax.set_title(f"{session_dir.name}: leave-one-out ROI dR/R(t), n={len(interp_curves)} trials\n"
@@ -836,7 +861,7 @@ def main(session_dir: Path, full_frame: bool = False, shared_crop=None, out_suff
         if i >= len(interp_curves):
             break
         ax.plot(common_grid, interp_curves[i], color=cmap(i / denom), lw=1.1, label=f"trial {t}")
-        _bridge_gaps(ax, common_grid, interp_curves[i], color="k", lw=1.1)
+        _bridge_gaps(ax, common_grid, interp_curves[i], color=cmap(i / denom), lw=0.8)
     ax.set_xlabel("Time relative to STIM_START (s)")
     ax.set_ylabel("ROI dR/R (%)")
     ax.set_title(f"{session_dir.name}: per-trial LOO ROI dR/R(t) (dark->light = trial order)")

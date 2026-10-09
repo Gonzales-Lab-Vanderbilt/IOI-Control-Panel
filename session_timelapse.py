@@ -683,14 +683,20 @@ def main(argv: list) -> int:
     # ── filmstrip ─────────────────────────────────────────────────────────
     ft = [float(v) for v in args.filmstrip_times.split(",") if v.strip()]
     nrow = 2 if disp_c is not None else 1
-    fig = plt.figure(figsize=(2.6 * len(ft) + 1.2, 2.0 * nrow + 2.4), dpi=200, facecolor="white")
-    left, right, top_ = 0.05, 0.90, 0.93
+    left, right = 0.05, 0.90
+    fig_w = 2.6 * len(ft) + 1.2
+    tile_h_in = (right - left) * fig_w / len(ft) * shape[0] / shape[1]
+    BOTTOM, TRACE, GAP, ROWGAP, TOP = 0.9, 1.4, 0.6, 0.12, 0.45   # inches
+    fig_h = BOTTOM + TRACE + GAP + nrow * tile_h_in + (nrow - 1) * ROWGAP + TOP
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=200, facecolor="white")
     tile_w = (right - left) / len(ft)
-    tile_h = tile_w * fig.get_figwidth() / fig.get_figheight() * shape[0] / shape[1]
+    tile_h = tile_h_in / fig_h
+    row_gap = ROWGAP / fig_h
+    top_ = 1 - TOP / fig_h
     strip_rows = [disp] + ([disp_c] if disp_c is not None else [])
     row_names = [args.stim_label] + ([args.compare_label] if disp_c is not None else [])
     for r_i, (stack, rname) in enumerate(zip(strip_rows, row_names)):
-        y = top_ - (r_i + 1) * tile_h - r_i * 0.02
+        y = top_ - (r_i + 1) * tile_h - r_i * row_gap
         for c_i, t in enumerate(ft):
             axi = fig.add_axes([left + c_i * tile_w + 0.003, y, tile_w - 0.006, tile_h])
             axi.set_axis_off()
@@ -714,12 +720,12 @@ def main(argv: list) -> int:
                         draw_scalebar(axi, shape, um_b, 6)
                     draw_compass(axi, shape, orient, 6)
             draw_landmarks(axi, lm, region, b, 6, um)
-    y_last = top_ - nrow * tile_h - (nrow - 1) * 0.02
+    y_last = top_ - nrow * tile_h - (nrow - 1) * row_gap
     cax = fig.add_axes([right + 0.012, y_last + 0.1 * tile_h, 0.012, nrow * tile_h - 0.2 * tile_h])
     cb = fig.colorbar(plt.cm.ScalarMappable(Normalize(-vmax, vmax), cmap="RdBu"), cax=cax)
     cb.set_ticks([-vmax, 0, vmax]); cb.ax.tick_params(labelsize=7)
     cb.set_label("ΔR/R (%)", fontsize=8)
-    axt = fig.add_axes([left + 0.03, 0.16, right - left - 0.03, y_last - 0.26])
+    axt = fig.add_axes([left + 0.03, BOTTOM / fig_h, right - left - 0.03, TRACE / fig_h])
     plot_traces(axt, series, stim_dur, spans, xlim, 9)
     for t in ft:
         axt.axvline(t, color="black", lw=0.7, ls=":", zorder=4)

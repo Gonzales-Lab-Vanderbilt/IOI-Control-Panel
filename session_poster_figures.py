@@ -592,7 +592,27 @@ def phase_offsets(session_dir: Path) -> tuple[float, float]:
     need = {"STIM_START", "BASELINE_LAST_FRAME_TRIGGER", "POST_FIRST_FRAME_TRIGGER"}
     bl = [(m["BASELINE_LAST_FRAME_TRIGGER"] - m["STIM_START"]) / 1000.0 for m in per_trial.values() if need <= set(m)]
     pf = [(m["POST_FIRST_FRAME_TRIGGER"] - m["STIM_START"]) / 1000.0 for m in per_trial.values() if need <= set(m)]
-    return float(np.median(bl)), float(np.median(pf))
+    bl_s, pf_s = float(np.median(bl)), float(np.median(pf))
+
+    # The marker fires on the last baseline TRIGGER. Old firmware sent 45 and
+    # saved 40, so take the last SAVED frame's time from the camera clock.
+    last_base, first_post = {}, {}
+    with open(session_dir / "session_log.csv", newline="", encoding="utf-8") as fp:
+        for r in csv.DictReader(fp):
+            fname = (r.get("filename") or "").strip()
+            cam = (r.get("camera_timestamp") or "").strip()
+            if not fname or not cam:
+                continue
+            trial = r["trial_index"]
+            if fname.startswith("baseline_"):
+                if trial not in last_base or fname >= last_base[trial][0]:
+                    last_base[trial] = (fname, int(cam))
+            elif fname.startswith("post_00001"):
+                first_post[trial] = int(cam)
+    back = [(last_base[k][1] - first_post[k]) / 1e9 for k in last_base if k in first_post]
+    if back:
+        bl_s = pf_s + float(np.median(back))
+    return bl_s, pf_s
 
 
 def session_axes(session_dir: Path, summary: dict) -> dict:
@@ -675,7 +695,7 @@ def _ragged_object_array(arrays: list) -> np.ndarray:
 def gap_fills_span(gap_t: np.ndarray, b_last: float, p_first: float, tol: float) -> bool:
     if len(gap_t) == 0:
         return False
-    boundary = np.concatenate([[b_last], np.sort(gap_t), [p_first]])
+    boundary = np.concatenate([np.sort(gap_t), [p_first]])
     diffs = np.diff(boundary)
     return bool(np.all(diffs >= -1e-9) and np.all(diffs <= tol))
 
@@ -706,6 +726,8 @@ def gridded_mean_sem(session_dir: Path, axes: dict, values: np.ndarray, gap_valu
             tt = np.concatenate([axes["t_axis"][:nb], gt[:n][order], axes["t_axis"][nb:]])
             vv = np.concatenate([values[i][:nb], gv[:n][order], values[i][nb:]])
             curve = np.interp(grid, tt, vv, left=np.nan, right=np.nan)
+            if gt[:n].min() - axes["b_last"] > tol:
+                curve[(grid > axes["b_last"]) & (grid < gt[:n].min())] = np.nan
         else:
             curve = np.interp(grid, axes["t_axis"], values[i], left=np.nan, right=np.nan)
             curve[(grid > axes["b_last"]) & (grid < axes["p_first"])] = np.nan
@@ -833,16 +855,19 @@ def render_timecourse(
     # gap-frame coverage; the box only newly disappears when coverage is
     # complete for every series drawn).
     gap_mask = (grid > axes["b_last"]) & (grid < axes["p_first"])
-    gap_visible = any(np.isnan(m[gap_mask]).any() for m, *_ in series)
+    gap_missing = gap_mask & np.any([np.isnan(m) for m, *_ in series], axis=0)
+    gap_visible = bool(gap_missing.any())
+    if gap_visible:
+        g_lo, g_hi = float(grid[gap_missing].min()), float(grid[gap_missing].max())
 
     fig, ax = plt.subplots(figsize=(8.4, 4.8))
     ax.axvspan(axes["w0"], axes["w1"], color="#FFD400", alpha=0.22,
                label=f"Amplitude window (stimulus frames {axes['f0'] + 1}-{axes['f1']})")
     if gap_visible:
-        ax.axvspan(axes["b_last"], axes["p_first"], color="0.90", alpha=0.85, zorder=0)
+        ax.axvspan(g_lo, g_hi, color="0.90", alpha=0.85, zorder=0)
     for m, s, c, lbl, lw, _ in series:
         ax.fill_between(grid, m - s, m + s, color=c, alpha=0.26, lw=0)
-        ax.plot(grid, m, color=c, lw=lw, label=lbl)
+        ax.plot(grid, m, color=c, lw=1.0, label=lbl)
         _bridge_gaps(ax, grid, m, color=c, lw=lw)
     ax.axhline(0, color="0.6", lw=0.8)
     ax.axvline(0, color="crimson", lw=1.1, ls="--", label="Stimulus onset")
@@ -861,9 +886,9 @@ def render_timecourse(
     pad = 0.32 * (hi - lo) + 1e-3
     ax.set_ylim(lo - pad, hi + pad)
     y0, y1 = ax.get_ylim()
-    if gap_visible:
-        ax.text((axes["b_last"] + axes["p_first"]) / 2, y1 - 0.06 * (y1 - y0),
-                "acquisition gap\n(gap frames plotted)", ha="center", va="top", fontsize=7,
+    if gap_visible and (g_hi - g_lo) >= 0.6:
+        ax.text((g_lo + g_hi) / 2, y1 - 0.06 * (y1 - y0),
+                "no frames\nsaved", ha="center", va="top", fontsize=7,
                 color="0.30", linespacing=1.3,
                 bbox=dict(boxstyle="round,pad=0.28", fc="white", ec="0.75", lw=0.6, alpha=0.9))
     if not suppress_title:

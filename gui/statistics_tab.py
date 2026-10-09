@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -733,6 +734,8 @@ class StatisticsWidget(QWidget):
 
         orient_widget = QWidget()
         orient_widget.setLayout(orient_col)
+        # figures tab inherits the tallest sibling tab's height, stopping orientation from taking it
+        orient_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         orient_widget.setToolTip(
             "Compass orientation for the panel figures. Default (anterior=left, "
             "medial=bottom) is a carried-forward default assumption, not per-session "
