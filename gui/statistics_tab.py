@@ -790,6 +790,14 @@ class StatisticsWidget(QWidget):
         )
         f.addRow("", self._show_amplitude_labels_check)
 
+        self._negative_only_check = QCheckBox("Show only negative dR/R (hide increases)")
+        self._negative_only_check.setToolTip(
+            "Colour only reflectance decreases (activation) in the cortical panels and "
+            "time-lapse; increases are left uncoloured. Saved with a _neg suffix. Leave "
+            "off when checking a session: vessel dipoles and edge artefacts show up as increases."
+        )
+        f.addRow("", self._negative_only_check)
+
         self._timelapse_check = QCheckBox("Also render a time-lapse movie + filmstrip")
         self._timelapse_check.setToolTip(
             "After the figures, run session_timelapse.py into the same output folder: a "
@@ -1319,6 +1327,7 @@ class StatisticsWidget(QWidget):
             suppress_title=self._suppress_title_check.isChecked(),
             show_amplitude_labels=self._show_amplitude_labels_check.isChecked(),
             make_timelapse=self._timelapse_check.isChecked(),
+            negative_only=self._negative_only_check.isChecked(),
         )
 
     def _stats_snapshots_to_queue(self) -> list[StatsFormSnapshot]:
