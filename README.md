@@ -15,14 +15,19 @@ Vanderbilt University.
 ## How it works
 
 ```mermaid
-flowchart LR
-    GUI["GUI<br/>(PySide6 + pyserial)"] -->|"launches via py -3.10"| S["Acquisition and<br/>analysis scripts"]
-    S -->|"stdout / stderr"| GUI
-    S --> CAM["Blackfly camera<br/>(PySpin)"]
-    S <-->|"serial"| ARD["Arduino<br/>(LEDs + sync markers)"]
-    S -.->|"UDP 55000"| STIM["Visual stimulus server<br/>(optional)"]
+flowchart TB
+    GUI["GUI<br/>PySide6 + pyserial"]
+    S["Acquisition and analysis scripts<br/>Python 3.10 subprocesses"]
+    CAM["Blackfly camera<br/>(PySpin)"]
+    ARD["Arduino<br/>(LEDs + sync markers)"]
+    STIM["Visual stimulus server<br/>(optional)"]
+ 
+    GUI <-->|"launches scripts, streams log"| S
+    S --> CAM
+    S <-->|"serial"| ARD
+    S -.->|"UDP 55000"| STIM
 ```
-
+ 
 The GUI collects parameters from forms and presets, builds a command line, and
 runs the scripts as **subprocesses**, streaming their output into a live log
 pane. It never imports PySpin, numpy, or any acquisition code itself. All camera
